@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Modal, Pressable, SafeAreaView, StyleSheet, View } from "react-native";
+import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 
 import { Tela } from "../components/Tela";
 import {
@@ -49,9 +50,12 @@ export function RegistrarCompra({
   const abrir = useNavegacao((estado) => estado.abrir);
 
   const [clienteId, setClienteId] = useState(clienteInicial ?? "");
+  const [codigoCliente, setCodigoCliente] = useState("");
   const [campanhaId, setCampanhaId] = useState(campanhaInicial ?? "");
   const [centavos, setCentavos] = useState<number | null>(null);
   const [busca, setBusca] = useState("");
+  const [scannerAberto, setScannerAberto] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
 
   // Só as campanhas que aceitam lançamento agora. Oferecer rascunho ou encerrada
   // seria oferecer um caminho que o servidor recusa.
@@ -76,26 +80,32 @@ export function RegistrarCompra({
     aoVoltar();
   });
 
-  const pronto = Boolean(clienteId && campanhaId && centavos && centavos > 0);
+  const pronto = Boolean((clienteId || codigoCliente.trim()) && campanhaId && centavos && centavos > 0);
 
   return (
-    <Tela
-      titulo="Registrar compra"
-      aoVoltar={aoVoltar}
-      rodape={
-        <Botao
-          titulo="Registrar"
-          largura="cheia"
-          onPress={() => {
-            if (!pronto) return;
-            registrar.mutate({ campanhaId, clienteId, valorCompra: centavos! });
-          }}
-          desabilitado={!pronto}
-          carregando={registrar.isPending}
-          style={{ flex: 1 }}
-        />
-      }
-    >
+    <>
+      <Tela
+        titulo="Registrar compra"
+        aoVoltar={aoVoltar}
+        rodape={
+          <Botao
+            titulo="Registrar"
+            largura="cheia"
+            onPress={() => {
+              if (!pronto) return;
+              registrar.mutate({
+                campanhaId,
+                clienteId: clienteId || undefined,
+                codigoCliente: codigoCliente.trim() || undefined,
+                valorCompra: centavos!,
+              });
+            }}
+            desabilitado={!pronto}
+            carregando={registrar.isPending}
+            style={{ flex: 1 }}
+          />
+        }
+      >
       {/* Passo 1 — quem */}
       <Secao titulo="Cliente">
         {clienteEscolhido ? (
@@ -116,6 +126,7 @@ export function RegistrarCompra({
                 compacto
                 onPress={() => {
                   setClienteId("");
+                  setCodigoCliente("");
                   setBusca("");
                 }}
               />
@@ -123,7 +134,27 @@ export function RegistrarCompra({
           </Cartao>
         ) : (
           <View style={{ gap: spacing.sm }}>
-            <Busca valor={busca} onChange={setBusca} placeholder="Nome, documento ou cartão" />
+            <Botao
+              titulo="Ler QR do cliente"
+              icone="qr-code-outline"
+              variante="secundario"
+              largura="cheia"
+              onPress={async () => {
+                if (!permission?.granted) {
+                  const resposta = await requestPermission();
+                  if (!resposta.granted) return;
+                }
+                setScannerAberto(true);
+              }}
+            />
+            <Busca
+              valor={busca}
+              onChange={(texto) => {
+                setBusca(texto);
+                setCodigoCliente("");
+              }}
+              placeholder="Nome, documento ou cartão"
+            />
 
             {clientes.isPending ? (
               <Carregando />
@@ -132,7 +163,10 @@ export function RegistrarCompra({
                 <SeletorDeCliente
                   key={cliente.id}
                   cliente={cliente}
-                  onPress={() => setClienteId(cliente.id)}
+                  onPress={() => {
+                    setClienteId(cliente.id);
+                    setCodigoCliente("");
+                  }}
                 />
               ))
             ) : busca.trim() ? (
@@ -144,6 +178,16 @@ export function RegistrarCompra({
             ) : (
               <Apoio>Busque pelo nome, documento ou código do cartão.</Apoio>
             )}
+            {!clienteId && codigoCliente ? (
+              <Cartao destaque>
+                <Rotulo>QR lido</Rotulo>
+                <Texto>{codigoCliente}</Texto>
+                <Apoio>
+                  Se a pessoa existir em outra loja, o servidor vincula este cliente
+                  à empresa atual no lançamento.
+                </Apoio>
+              </Cartao>
+            ) : null}
           </View>
         )}
       </Secao>
@@ -210,8 +254,86 @@ export function RegistrarCompra({
           </Cartao>
         ) : null}
       </Secao>
-    </Tela>
+      </Tela>
+      <ScannerQrCliente
+        visivel={scannerAberto}
+        onFechar={() => setScannerAberto(false)}
+        onLer={(valor) => {
+          const buscaQr = textoBuscaDoQr(valor);
+          setCodigoCliente(buscaQr);
+          setBusca(buscaQr);
+          setClienteId("");
+          setScannerAberto(false);
+        }}
+      />
+    </>
   );
+}
+
+function ScannerQrCliente({
+  visivel,
+  onFechar,
+  onLer,
+}: {
+  visivel: boolean;
+  onFechar: () => void;
+  onLer: (valor: string) => void;
+}) {
+  const [bloqueado, setBloqueado] = useState(false);
+
+  useEffect(() => {
+    if (visivel) setBloqueado(false);
+  }, [visivel]);
+
+  const aoLer = (resultado: BarcodeScanningResult) => {
+    if (bloqueado || !resultado.data) return;
+    setBloqueado(true);
+    onLer(resultado.data);
+  };
+
+  return (
+    <Modal visible={visivel} animationType="slide" onRequestClose={onFechar}>
+      <SafeAreaView style={estilos.safe}>
+        <View style={estilos.scannerHeader}>
+          <View style={{ flex: 1 }}>
+            <Titulo nivel={2}>Ler QR do cliente</Titulo>
+            <Apoio>Aponte para o QR do cartão Fideliza+.</Apoio>
+          </View>
+          <Botao titulo="Fechar" variante="sutil" compacto onPress={onFechar} />
+        </View>
+        <CameraView
+          style={estilos.camera}
+          facing="back"
+          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          onBarcodeScanned={bloqueado ? undefined : aoLer}
+        >
+          <View style={estilos.miraQr}>
+            <View style={estilos.miraCaixa} />
+          </View>
+        </CameraView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function textoBuscaDoQr(valor: string) {
+  const bruto = valor.trim();
+  if (!bruto) return "";
+
+  try {
+    const url = new URL(bruto);
+    const chaves = ["codigoCartao", "cartao", "codigo", "cpf", "documento", "cliente"];
+    for (const chave of chaves) {
+      const lido = url.searchParams.get(chave);
+      if (lido) return lido.trim();
+    }
+    const ultimoSegmento = url.pathname.split("/").filter(Boolean).at(-1);
+    if (ultimoSegmento) return decodeURIComponent(ultimoSegmento);
+  } catch {
+    // QR simples: usa o próprio conteúdo.
+  }
+
+  return bruto;
 }
 
 function Previsao({ campanha, centavos }: { campanha: Campanha; centavos: number }) {
@@ -304,5 +426,29 @@ const estilos = StyleSheet.create({
     borderWidth: 1,
     padding: spacing.md,
     gap: spacing.xs,
+  },
+  safe: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  scannerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  camera: {
+    flex: 1,
+  },
+  miraQr: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  miraCaixa: {
+    width: 240,
+    height: 240,
+    borderWidth: 3,
+    borderColor: colors.primary,
   },
 });

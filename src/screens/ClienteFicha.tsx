@@ -141,7 +141,11 @@ export function ClienteFicha({ id, aoVoltar }: { id: string; aoVoltar: () => voi
                       </View>
                       <Apoio>Prêmio: {sorteio.premio}</Apoio>
                       <Linha rotulo="Cupons">
-                        <Texto style={{ fontVariant: ["tabular-nums"] }}>{sorteio.cupons}</Texto>
+                        <Texto style={{ fontVariant: ["tabular-nums"] }}>
+                          {sorteio.limiteTotalCupons
+                            ? `${sorteio.cupons}/${sorteio.limiteTotalCupons}`
+                            : sorteio.cupons}
+                        </Texto>
                       </Linha>
                     </Cartao>
                   ))}

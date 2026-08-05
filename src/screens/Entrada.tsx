@@ -1,13 +1,15 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
 
-import { Apoio, Botao, Campo, Titulo } from "../components/ui";
+import { Apoio, Botao, Campo } from "../components/ui";
 import { errosPorCampo, mensagemDoErro } from "../lib/api/errors";
 import { entrar } from "../services";
 import { avisar } from "../stores/avisos";
 import { useSession } from "../stores/session";
-import { colors, fontSize, spacing } from "../theme";
+import { colors, spacing } from "../theme";
+
+const LOGO = require("../../assets/logo.png");
 
 /**
  * A entrada da equipe.
@@ -51,9 +53,7 @@ export function Entrada({ aoIrParaPortal }: { aoIrParaPortal: () => void }) {
         showsVerticalScrollIndicator={false}
       >
         <View style={estilos.marca}>
-          <Titulo nivel={1} style={{ fontSize: fontSize["3xl"] }}>
-            Fideliza+
-          </Titulo>
+          <Image source={LOGO} resizeMode="contain" style={estilos.logo} />
           <Apoio>Cartão fidelidade e sorteio, sem papel.</Apoio>
         </View>
 
@@ -122,8 +122,13 @@ const estilos = StyleSheet.create({
     gap: spacing.xl,
   },
   marca: {
+    alignItems: "flex-start",
     gap: spacing.xs,
     marginBottom: spacing.sm,
+  },
+  logo: {
+    width: 150,
+    height: 70,
   },
   divisorTexto: {
     flexDirection: "row",

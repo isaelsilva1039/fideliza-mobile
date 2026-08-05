@@ -58,6 +58,7 @@ interface Formulario {
   valorPorCupom: number | null;
   valorMinimoCompra: number | null;
   quantidadeGanhadores: string;
+  limiteTotalCupons: string;
   limiteDiarioCliente: string;
   nomePremio: string;
   descricaoPremio: string;
@@ -76,6 +77,7 @@ const VAZIO: Formulario = {
   valorPorCupom: 1000,
   valorMinimoCompra: null,
   quantidadeGanhadores: "1",
+  limiteTotalCupons: "",
   limiteDiarioCliente: "",
   nomePremio: "",
   descricaoPremio: "",
@@ -135,6 +137,7 @@ export function CampanhaForm({ id, aoVoltar }: { id?: string; aoVoltar: () => vo
       valorPorCupom: carregada.regra.valorPorCupom ?? 1000,
       valorMinimoCompra: carregada.regra.valorMinimoCompra ?? null,
       quantidadeGanhadores: String(carregada.regra.quantidadeGanhadores ?? 1),
+      limiteTotalCupons: carregada.regra.limiteTotalCupons?.toString() ?? "",
       limiteDiarioCliente: carregada.regra.limiteDiarioCliente?.toString() ?? "",
       nomePremio: carregada.premio?.nome ?? "",
       descricaoPremio: carregada.premio?.descricao ?? "",
@@ -227,6 +230,7 @@ export function CampanhaForm({ id, aoVoltar }: { id?: string; aoVoltar: () => vo
       selosNecessarios: ehSorteio ? undefined : Number(form.selosNecessarios),
       valorPorCupom: ehSorteio ? (form.valorPorCupom ?? undefined) : undefined,
       quantidadeGanhadores: ehSorteio ? numeroOuUndefined(form.quantidadeGanhadores) : undefined,
+      limiteTotalCupons: ehSorteio ? numeroOuUndefined(form.limiteTotalCupons) : undefined,
       limiteDiarioCliente: numeroOuUndefined(form.limiteDiarioCliente),
       nomePremio: form.nomePremio.trim(),
       descricaoPremio: form.descricaoPremio.trim() || undefined,
@@ -321,6 +325,14 @@ export function CampanhaForm({ id, aoVoltar }: { id?: string; aoVoltar: () => vo
               onChange={(v) => atualizar("quantidadeGanhadores", v.replace(/\D/g, ""))}
               teclado="number-pad"
               erro={erros.quantidadeGanhadores}
+            />
+            <Campo
+              rotulo="Limite total de cupons (opcional)"
+              valor={form.limiteTotalCupons}
+              onChange={(v) => atualizar("limiteTotalCupons", v.replace(/\D/g, ""))}
+              teclado="number-pad"
+              dica="Ao atingir esse total, a campanha para de aceitar novos cupons."
+              erro={erros.limiteTotalCupons}
             />
           </>
         ) : (

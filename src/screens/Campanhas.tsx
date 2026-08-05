@@ -30,7 +30,7 @@ import {
 } from "../services/contrato";
 import { useNavegacao } from "../stores/navegacao";
 import { useUsuario } from "../stores/session";
-import { spacing, type Tone } from "../theme";
+import { borderWidth, colors, spacing, type Tone } from "../theme";
 
 /**
  * A listagem de campanhas.
@@ -171,25 +171,53 @@ export function ItemDeCampanha({
   campanha: Campanha;
   onPress: () => void;
 }) {
+  const limiteCupons = campanha.tipo === "SORTEIO" ? campanha.regra.limiteTotalCupons : undefined;
+  const cuponsEmitidos = campanha.totalBeneficios ?? 0;
+  const progressoCupons =
+    limiteCupons && limiteCupons > 0
+      ? Math.min(100, Math.round((cuponsEmitidos / limiteCupons) * 100))
+      : 0;
+  const limiteAtingido = Boolean(limiteCupons && cuponsEmitidos >= limiteCupons);
+
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={campanha.nome}>
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={campanha.premio?.nome ?? campanha.nome}>
       <Cartao destaque={campanha.podeSortear}>
         <View style={estilos.topo}>
           <Titulo nivel={3} style={{ flex: 1 }} numberOfLines={2}>
-            {campanha.nome}
+            {campanha.premio?.nome ?? "Prêmio a definir"}
           </Titulo>
           <Selo tom={TOM_DA_SITUACAO[campanha.situacao]}>
             {ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}
           </Selo>
         </View>
 
-        <Apoio>{ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Apoio>
+        <Apoio>{campanha.nome} • {ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Apoio>
 
         {/* A frase da regra vem pronta do servidor — quem decidiu a regra é quem
             a escreve, então ela nunca discorda do que o sistema faz. */}
         <Texto numberOfLines={2}>{campanha.regraEmUmaFrase}</Texto>
 
-        {campanha.premio ? <Apoio numberOfLines={1}>Prêmio: {campanha.premio.nome}</Apoio> : null}
+        {limiteCupons ? (
+          <View style={estilos.progressoCupons}>
+            <View style={estilos.rodape}>
+              <Texto>
+                {cuponsEmitidos}/{limiteCupons} cupons
+              </Texto>
+              <Apoio>{limiteAtingido ? "Limite atingido" : `${progressoCupons}%`}</Apoio>
+            </View>
+            <View style={estilos.barraFundo}>
+              <View
+                style={[
+                  estilos.barraPreenchida,
+                  {
+                    width: `${progressoCupons}%`,
+                    backgroundColor: limiteAtingido ? colors.warning : colors.primary,
+                  },
+                ]}
+              />
+            </View>
+          </View>
+        ) : null}
 
         <View style={estilos.rodape}>
           <Apoio>{plural(campanha.totalParticipantes, "participante", "participantes")}</Apoio>
@@ -298,5 +326,21 @@ const estilos = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     gap: spacing.sm,
+  },
+  progressoCupons: {
+    gap: spacing.xs,
+    padding: spacing.sm,
+    backgroundColor: colors.accent,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+  },
+  barraFundo: {
+    height: 8,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+  },
+  barraPreenchida: {
+    height: "100%",
   },
 });

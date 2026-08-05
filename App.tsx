@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import QRCode from "react-native-qrcode-svg";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +12,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -85,6 +87,7 @@ const queryClient = new QueryClient({
 });
 
 type FluxoPublico = "login" | "portal-documento" | "portal-codigo" | "portal-cartao";
+type AbaAtual = NomeDeAba | "notificacoes";
 
 export default function App() {
   return (
@@ -98,7 +101,7 @@ export default function App() {
 function FidelizaApp() {
   const { session, hydrated, hydrate, setSession, clear, setEmpresaAtiva } = useSession();
   const [fluxoPublico, setFluxoPublico] = useState<FluxoPublico>("login");
-  const [aba, setAba] = useState<NomeDeAba>("inicio");
+  const [aba, setAba] = useState<AbaAtual>("inicio");
   const [campanhaAbertaId, setCampanhaAbertaId] = useState<string | null>(null);
   const [clienteAbertoId, setClienteAbertoId] = useState<string | null>(null);
 
@@ -109,7 +112,7 @@ function FidelizaApp() {
   useEffect(() => {
     if (!session) return;
     const primeiraAba = abasDoPerfil(session.usuario.perfil)[0]?.rota ?? "inicio";
-    setAba((atual) => (abasDoPerfil(session.usuario.perfil).some((item) => item.rota === atual) ? atual : primeiraAba));
+    setAba((atual) => (atual === "notificacoes" || abasDoPerfil(session.usuario.perfil).some((item) => item.rota === atual) ? atual : primeiraAba));
   }, [session]);
 
   useEffect(() => {
@@ -140,7 +143,7 @@ function FidelizaApp() {
 
   const abas = abasDoPerfil(session.usuario.perfil);
   const empresaAtiva = session.empresas.find((empresa) => empresa.id === session.empresaAtivaId);
-  const trocarAba = (proxima: NomeDeAba) => {
+  const trocarAba = (proxima: AbaAtual) => {
     setCampanhaAbertaId(null);
     setClienteAbertoId(null);
     setAba(proxima);
@@ -188,12 +191,55 @@ function FidelizaApp() {
       {aba === "lancamentos" ? <Lancamentos /> : null}
       {aba === "equipe" ? <Equipe perfil={session.usuario.perfil} /> : null}
       {aba === "empresas" ? <Empresas /> : null}
+      {aba === "notificacoes" ? <Notificacoes /> : null}
     </Shell>
   );
 }
 
 function abasDoPerfil(perfil: Perfil) {
   return MENU.filter((item) => !item.permissao || pode({ perfil }, item.permissao));
+}
+
+function Notificacoes() {
+  const [atualizando, setAtualizando] = useState(false);
+
+  async function atualizar() {
+    setAtualizando(true);
+    try {
+      await queryClient.invalidateQueries();
+      avisar.informacao("Notificações atualizadas.");
+    } finally {
+      setAtualizando(false);
+    }
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={{ gap: spacing.md }}
+      refreshControl={
+        <RefreshControl
+          refreshing={atualizando}
+          onRefresh={() => void atualizar()}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
+      }
+    >
+      <Cartao>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+          <View style={estilos.notificacaoPortalIcone}>
+            <Icone nome="notifications-outline" cor={colors.primary} tamanho={24} />
+          </View>
+          <View style={{ flex: 1, gap: spacing.xs }}>
+            <Titulo>Nenhuma notificação no momento</Titulo>
+            <Apoio>
+              Quando houver avisos para sua conta ou empresa, eles aparecerão aqui.
+            </Apoio>
+          </View>
+        </View>
+      </Cartao>
+    </ScrollView>
+  );
 }
 
 function Login({ onEntrar, onCliente }: { onEntrar: (email: string, senha: string) => Promise<void>; onCliente: () => void }) {
@@ -285,27 +331,129 @@ function PortalCliente({ fluxo, onFluxo }: { fluxo: FluxoPublico; onFluxo: (flux
     );
   }
 
-  return <CartaoPublico cartao={cartao} onSair={() => onFluxo("login")} />;
+  return <CartaoPublico pedidoId={pedidoId} cartao={cartao} onCartao={setCartao} onSair={() => onFluxo("login")} />;
 }
 
-function CartaoPublico({ cartao, onSair }: { cartao?: CartaoDoPortal; onSair: () => void }) {
+function CartaoPublico({
+  pedidoId,
+  cartao,
+  onCartao,
+  onSair,
+}: {
+  pedidoId: string;
+  cartao?: CartaoDoPortal;
+  onCartao: (cartao: CartaoDoPortal) => void;
+  onSair: () => void;
+}) {
+  const [lendoNotificacaoId, setLendoNotificacaoId] = useState<string | null>(null);
+  const [mostrandoNotificacoes, setMostrandoNotificacoes] = useState(false);
+  const [atualizandoNotificacoes, setAtualizandoNotificacoes] = useState(false);
+
+  async function marcarComoLida(id: string) {
+    if (!cartao) return;
+    const atual = cartao.notificacoes.find((item) => item.id === id);
+    if (!atual || atual.lidaEm) return;
+
+    setLendoNotificacaoId(id);
+    try {
+      const atualizada = await servico.marcarNotificacaoPortalComoLida(pedidoId, id);
+      const notificacoes = cartao.notificacoes.map((item) =>
+        item.id === atualizada.id ? atualizada : item,
+      );
+      onCartao({
+        ...cartao,
+        notificacoes,
+        notificacoesNaoLidas: notificacoes.filter((item) => !item.lidaEm).length,
+      });
+    } catch (erro) {
+      avisar.erro(mensagemDoErro(erro));
+    } finally {
+      setLendoNotificacaoId(null);
+    }
+  }
+
+  async function atualizarNotificacoes() {
+    if (!cartao) return;
+    setAtualizandoNotificacoes(true);
+    try {
+      const notificacoes = await servico.listarNotificacoesPortal(pedidoId);
+      onCartao({
+        ...cartao,
+        notificacoes,
+        notificacoesNaoLidas: notificacoes.filter((item) => !item.lidaEm).length,
+      });
+    } finally {
+      setAtualizandoNotificacoes(false);
+    }
+  }
+
+  if (mostrandoNotificacoes) {
+    return (
+      <SafeAreaView style={estilos.safe}>
+        <ScrollView
+          contentContainerStyle={estilos.conteudo}
+          refreshControl={
+            <RefreshControl
+              refreshing={atualizandoNotificacoes}
+              onRefresh={() => void atualizarNotificacoes()}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
+        >
+          <TopoSimples
+            titulo="Notificações"
+            subtitulo={cartao?.empresa ?? "Seu cartão"}
+            acao={<Botao titulo="Voltar" variante="sutil" compacto onPress={() => setMostrandoNotificacoes(false)} />}
+          />
+          <ListaNotificacoesPortal
+            cartao={cartao}
+            lendoNotificacaoId={lendoNotificacaoId}
+            onMarcarComoLida={marcarComoLida}
+          />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={estilos.safe}>
       <ScrollView contentContainerStyle={estilos.conteudo}>
-        <TopoSimples titulo={`Olá${cartao?.primeiroNome ? `, ${cartao.primeiroNome}` : ""}`} subtitulo={cartao?.empresa ?? "Seus benefícios"} acao={<Botao titulo="Sair" variante="sutil" compacto onPress={onSair} />} />
+        <TopoSimples
+          titulo={`Olá${cartao?.primeiroNome ? `, ${cartao.primeiroNome}` : ""}`}
+          subtitulo={cartao?.empresa ?? "Seus benefícios"}
+          acao={
+            <View style={estilos.acoesTopoPortal}>
+              <SininhoNotificacoes
+                quantidade={cartao?.notificacoesNaoLidas ?? 0}
+                onPress={() => setMostrandoNotificacoes(true)}
+              />
+              <Botao titulo="Sair" variante="sutil" compacto onPress={onSair} />
+            </View>
+          }
+        />
         <View style={estilos.cartaoCliente}>
+          <View style={estilos.cartaoClienteBrilho} />
+          <View style={estilos.cartaoClienteCirculoMaior} />
+          <View style={estilos.cartaoClienteCirculoMenor} />
           <View style={estilos.cartaoClienteTopo}>
-            <Rotulo style={{ color: colors.primaryForeground }}>Meu cartão</Rotulo>
-            <Icone nome="card" cor={colors.primaryForeground} tamanho={24} />
+            <View style={{ flex: 1, gap: spacing.xs }}>
+              <Rotulo style={estilos.cartaoClienteRotulo}>Cartão</Rotulo>
+              <Titulo style={estilos.cartaoClienteTitulo}>Fideliza+</Titulo>
+              <Apoio style={estilos.cartaoClienteApoio}>Cartão único do cliente</Apoio>
+            </View>
+            <QrCodeLocal value={cartao?.codigoCartao ?? ""} size={92} />
           </View>
-          <Text style={estilos.codigoCartao}>{cartao?.codigoCartao ?? ""}</Text>
-          <Apoio style={{ color: colors.primaryForeground }}>Fidelidade que volta para você</Apoio>
+          <View style={estilos.cartaoClienteRodape}>
+            <Apoio style={estilos.cartaoClienteApoio}>Código do cartão</Apoio>
+            <Text style={estilos.codigoCartao}>{cartao?.codigoCartao ?? ""}</Text>
+          </View>
         </View>
         <Secao titulo="Cartões">
           {cartao?.cartoes.length ? cartao.cartoes.map((item) => (
             <Cartao key={`${item.empresa}-${item.campanhaId}`}>
-              <Titulo nivel={3}>{item.campanha}</Titulo>
-              <Apoio>{item.empresa} • {item.premio}</Apoio>
+              <Titulo nivel={3}>{item.premio}</Titulo>
+              <Apoio>{item.empresa} • {item.campanha}</Apoio>
               <Selos atuais={item.selosAtuais} necessarios={item.selosNecessarios} />
               <Linha rotulo="Termina em">{data(item.terminaEm)}</Linha>
             </Cartao>
@@ -313,10 +461,17 @@ function CartaoPublico({ cartao, onSair }: { cartao?: CartaoDoPortal; onSair: ()
         </Secao>
         <Secao titulo="Sorteios">
           {cartao?.sorteios.length ? cartao.sorteios.map((item) => (
-            <Cartao key={`${item.empresa}-${item.campanhaId}`}>
-              <Linha rotulo={item.campanha}><Selo tom={item.ganhou ? "success" : item.sorteado ? "neutral" : "brand"}>{item.ganhou ? "Ganhou" : item.sorteado ? "Sorteado" : "Concorrendo"}</Selo></Linha>
-              <Texto>{item.cupons} cupons • {item.premio}</Texto>
-              <Apoio>{item.empresa}</Apoio>
+            <Cartao key={`${item.empresa}-${item.campanhaId}`} destaque={item.ganhou || (!item.sorteado && item.situacao === "ENCERRADA")}>
+              <Linha rotulo={item.premio}>
+                <Selo tom={item.ganhou ? "success" : item.sorteado ? "neutral" : item.situacao === "ENCERRADA" ? "warning" : "brand"}>
+                  {item.ganhou ? "Ganhou" : item.sorteado ? "Sorteado" : item.situacao === "ENCERRADA" ? "Aguardando sorteio" : "Concorrendo"}
+                </Selo>
+              </Linha>
+              <Texto>{item.limiteTotalCupons ? `${item.cupons}/${item.limiteTotalCupons}` : `${item.cupons} cupons`}</Texto>
+              <Apoio>{item.empresa} • {item.campanha}</Apoio>
+              {!item.sorteado && item.situacao === "ENCERRADA" ? (
+                <Apoio>A campanha encerrou e seus cupons já estão garantidos. Agora é só aguardar a loja realizar o sorteio.</Apoio>
+              ) : null}
             </Cartao>
           )) : <Vazio texto="Você ainda não participa de sorteios." />}
         </Secao>
@@ -334,6 +489,94 @@ function CartaoPublico({ cartao, onSair }: { cartao?: CartaoDoPortal; onSair: ()
   );
 }
 
+function SininhoNotificacoes({ quantidade, onPress }: { quantidade: number; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={quantidade > 0 ? `${quantidade} notificações novas` : "Notificações"}
+      hitSlop={8}
+      onPress={onPress}
+      style={({ pressed }) => [estilos.sininho, pressed && { opacity: 0.65 }]}
+    >
+      <Icone nome={quantidade > 0 ? "notifications" : "notifications-outline"} cor={colors.heading} tamanho={22} />
+      {quantidade > 0 ? (
+        <View style={estilos.sininhoBadge}>
+          <Text style={estilos.sininhoBadgeTexto}>{quantidade > 9 ? "9+" : quantidade}</Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function ListaNotificacoesPortal({
+  cartao,
+  lendoNotificacaoId,
+  onMarcarComoLida,
+}: {
+  cartao?: CartaoDoPortal;
+  lendoNotificacaoId: string | null;
+  onMarcarComoLida: (id: string) => Promise<void>;
+}) {
+  if (!cartao?.notificacoes.length) {
+    return (
+      <Cartao>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+          <View style={estilos.notificacaoPortalIcone}>
+            <Icone nome="notifications-outline" cor={colors.primary} tamanho={24} />
+          </View>
+          <View style={{ flex: 1, gap: spacing.xs }}>
+            <Titulo>Nenhuma notificação no momento</Titulo>
+            <Apoio>Quando a loja lançar campanha, selo ou cupom, aparece aqui.</Apoio>
+          </View>
+        </View>
+      </Cartao>
+    );
+  }
+
+  return (
+    <Secao titulo="Notificações">
+      {cartao.notificacoesNaoLidas > 0 ? (
+        <Selo tom="brand">
+          {cartao.notificacoesNaoLidas} {cartao.notificacoesNaoLidas === 1 ? "nova" : "novas"}
+        </Selo>
+      ) : null}
+      {cartao.notificacoes.map((item) => {
+        const lida = Boolean(item.lidaEm);
+        return (
+          <Pressable
+            key={item.id}
+            disabled={lida || lendoNotificacaoId === item.id}
+            onPress={() => void onMarcarComoLida(item.id)}
+            style={[estilos.notificacaoPortal, !lida && estilos.notificacaoPortalNova]}
+          >
+            <View style={estilos.notificacaoPortalIcone}>
+              <Icone nome={lida ? "checkmark-circle-outline" : "notifications-outline"} cor={lida ? colors.muted : colors.primary} tamanho={22} />
+            </View>
+            <View style={{ flex: 1, gap: spacing.xs }}>
+              <Titulo nivel={3}>{item.titulo}</Titulo>
+              <Apoio>{item.mensagem}</Apoio>
+              {!lida ? <Rotulo>Toque para marcar como lida</Rotulo> : <Rotulo>Lida</Rotulo>}
+            </View>
+          </Pressable>
+        );
+      })}
+    </Secao>
+  );
+}
+
+function QrCodeLocal({ value, size }: { value: string; size: number }) {
+  return (
+    <View style={[estilos.qrLocal, { width: size, height: size }]}>
+      <QRCode
+        value={value || "FIDELIZA"}
+        size={size - 14}
+        backgroundColor="#FFFFFF"
+        color="#000000"
+      />
+    </View>
+  );
+}
+
 function Shell({
   aba,
   abas,
@@ -347,7 +590,7 @@ function Shell({
   onSair,
   children,
 }: {
-  aba: NomeDeAba;
+  aba: AbaAtual;
   abas: ReturnType<typeof abasDoPerfil>;
   usuario: string;
   perfil: Perfil;
@@ -355,7 +598,7 @@ function Shell({
   empresas: Empresa[];
   empresaAtivaId: string;
   onTrocarEmpresa: (id: string) => void;
-  onAba: (aba: NomeDeAba) => void;
+  onAba: (aba: AbaAtual) => void;
   onSair: () => void;
   children: ReactNode;
 }) {
@@ -373,12 +616,13 @@ function Shell({
           <LogoMarca />
           <Apoio numberOfLines={1} style={{ flex: 1 }}>{empresa}</Apoio>
         </View>
+        <SininhoNotificacoes quantidade={0} onPress={() => onAba("notificacoes")} />
         <BotaoIcone icone="person-circle-outline" rotulo="Abrir perfil" onPress={() => setPerfilAberto(true)} />
       </View>
       <View style={estilos.tituloTela}>
         <View>
           <Rotulo>{ROTULO_PERFIL[perfil]}</Rotulo>
-          <Titulo>{TITULOS[aba]}</Titulo>
+          <Titulo>{aba === "notificacoes" ? "Notificações" : TITULOS[aba]}</Titulo>
         </View>
       </View>
       <View style={estilos.miolo}>{children}</View>
@@ -492,6 +736,21 @@ function Inicio({ perfil, onAba }: { perfil: Perfil; onAba: (aba: NomeDeAba) => 
               )) : <Vazio texto="Nada pendente. Todos os prêmios já foram entregues." />}
             </Secao>
 
+            {inicio.premiosEntregues.length ? (
+              <Secao titulo="Prêmios entregues">
+                {inicio.premiosEntregues.slice(0, 4).map((item) => (
+                  <LinhaAcao
+                    key={item.id}
+                    icone="checkmark-done-outline"
+                    titulo={item.premio}
+                    subtitulo={`${item.cliente} • recebeu: ${item.recebedor} • ${desde(item.entregueEm)}`}
+                    tom="success"
+                    onPress={() => onAba("entregas")}
+                  />
+                ))}
+              </Secao>
+            ) : null}
+
             <Secao titulo="Movimento por dia">
               <Cartao>
                 <GraficoMovimento pontos={inicio.movimentoPorDia} />
@@ -500,16 +759,16 @@ function Inicio({ perfil, onAba }: { perfil: Perfil; onAba: (aba: NomeDeAba) => 
 
             <Secao titulo="Suas campanhas" acao={<Botao titulo="Ver todas" variante="sutil" compacto onPress={() => onAba("campanhas")} />}>
               {inicio.campanhas.length ? inicio.campanhas.slice(0, 5).map((item) => (
-                <Pressable key={item.id} onPress={() => onAba("campanhas")} accessibilityRole="button" accessibilityLabel={item.nome}>
+                <Pressable key={item.id} onPress={() => onAba("campanhas")} accessibilityRole="button" accessibilityLabel={item.premio}>
                   <Cartao>
                     <View style={estilos.linhaEntre}>
                       <View style={{ flex: 1 }}>
-                        <Titulo nivel={3} numberOfLines={1}>{item.nome}</Titulo>
-                        <Apoio>{ROTULO_TIPO_CAMPANHA[item.tipo]} • {plural(item.participantes, "cliente", "clientes")}</Apoio>
+                        <Titulo nivel={3} numberOfLines={1}>{item.premio}</Titulo>
+                        <Apoio>{item.nome} • {ROTULO_TIPO_CAMPANHA[item.tipo]}</Apoio>
                       </View>
                       <Selo tom={tomCampanha(item.situacao)}>{ROTULO_SITUACAO_CAMPANHA[item.situacao]}</Selo>
                     </View>
-                    <Apoio numberOfLines={1}>Prêmio: {item.premio}</Apoio>
+                    <Apoio>{plural(item.participantes, "cliente", "clientes")}</Apoio>
                   </Cartao>
                 </Pressable>
               )) : <Vazio texto="Nenhuma campanha publicada." />}
@@ -616,6 +875,12 @@ function CampanhaCard({
 }) {
   const progresso = progressoCampanha(campanha);
   const icone = campanha.tipo === "CARTAO_FIDELIDADE" ? "ticket-outline" : "sparkles-outline";
+  const limiteCupons = campanha.tipo === "SORTEIO" ? campanha.regra.limiteTotalCupons : undefined;
+  const progressoCupons =
+    limiteCupons && limiteCupons > 0
+      ? Math.min(100, Math.round(((campanha.totalBeneficios ?? 0) / limiteCupons) * 100))
+      : 0;
+  const limiteCuponsAtingido = Boolean(limiteCupons && (campanha.totalBeneficios ?? 0) >= limiteCupons);
   const destaque = campanha.podeSortear || campanha.situacao === "ATIVA";
   const transicoesPermitidas = campanha.proximasSituacoes
     .slice(0, 2)
@@ -623,7 +888,7 @@ function CampanhaCard({
   const podeExecutarSorteio = usuarioPodeSortearCampanha(perfil, podeSortear, campanha);
 
   return (
-    <Pressable onPress={onAbrir} accessibilityRole="button" accessibilityLabel={`Abrir ${campanha.nome}`}>
+    <Pressable onPress={onAbrir} accessibilityRole="button" accessibilityLabel={`Abrir ${campanha.premio?.nome ?? campanha.nome}`}>
       <Cartao destaque={destaque} style={estilos.campanhaCard}>
         <View style={estilos.campanhaTopo}>
           <View style={estilos.campanhaIcone}>
@@ -634,23 +899,56 @@ function CampanhaCard({
               <Selo tom={tomCampanha(campanha.situacao)}>{ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}</Selo>
               <Selo tom="brand">{ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Selo>
             </View>
-            <Titulo nivel={2} numberOfLines={2}>{campanha.nome}</Titulo>
+            <Titulo nivel={2} numberOfLines={2}>{campanha.premio?.nome ?? "Prêmio a definir"}</Titulo>
+            <Apoio numberOfLines={1}>{campanha.nome}</Apoio>
             <Apoio numberOfLines={2}>{campanha.regraEmUmaFrase}</Apoio>
+            {limiteCupons ? (
+              <View style={estilos.limiteCuponsCard}>
+                <Icone nome="ticket-outline" tamanho={16} cor={colors.heading} />
+                <Texto style={{ fontWeight: fontWeight.semibold }}>
+                  {campanha.totalBeneficios ?? 0}/{limiteCupons} cupons
+                </Texto>
+              </View>
+            ) : null}
           </View>
         </View>
 
         <View style={estilos.campanhaFaixa}>
           <View style={{ flex: 1 }}>
-            <Rotulo>Prêmio</Rotulo>
-            <Texto numberOfLines={1} style={{ fontWeight: fontWeight.semibold }}>{campanha.premio?.nome ?? "A definir"}</Texto>
+            <Rotulo>Campanha</Rotulo>
+            <Texto numberOfLines={1} style={{ fontWeight: fontWeight.semibold }}>{campanha.nome}</Texto>
           </View>
           {campanha.podeSortear ? <Selo tom="warning">Pronta para sortear</Selo> : null}
         </View>
 
-        <View style={estilos.campanhaProgressoFundo}>
-          <View style={[estilos.campanhaProgressoBarra, { width: `${progresso}%` }]} />
-        </View>
-        <Apoio>{textoPeriodoCampanha(campanha)} • {progresso}% do período</Apoio>
+        {limiteCupons ? (
+          <>
+            <View style={estilos.campanhaProgressoFundo}>
+              <View
+                style={[
+                  estilos.campanhaProgressoBarra,
+                  {
+                    width: `${progressoCupons}%`,
+                    backgroundColor: limiteCuponsAtingido ? colors.warning : colors.primary,
+                  },
+                ]}
+              />
+            </View>
+            <Apoio>
+              {progressoCupons}% dos cupons emitidos •{" "}
+              {limiteCuponsAtingido
+                ? "limite atingido"
+                : `${Math.max(0, limiteCupons - (campanha.totalBeneficios ?? 0))} restantes`}
+            </Apoio>
+          </>
+        ) : (
+          <>
+            <View style={estilos.campanhaProgressoFundo}>
+              <View style={[estilos.campanhaProgressoBarra, { width: `${progresso}%` }]} />
+            </View>
+            <Apoio>{textoPeriodoCampanha(campanha)} • {progresso}% do período</Apoio>
+          </>
+        )}
 
         <View style={estilos.gradeIndicadores}>
           <MiniDado rotulo="Participantes" valor={String(campanha.totalParticipantes)} />
@@ -811,6 +1109,12 @@ function CampanhaDetalhe({
 
   const campanha = detalhe.data.campanha;
   const isCartao = campanha.tipo === "CARTAO_FIDELIDADE";
+  const limiteCupons = !isCartao ? campanha.regra.limiteTotalCupons : undefined;
+  const progressoCupons =
+    limiteCupons && limiteCupons > 0
+      ? Math.min(100, Math.round((detalhe.data.totalBeneficios / limiteCupons) * 100))
+      : 0;
+  const limiteCuponsAtingido = Boolean(limiteCupons && detalhe.data.totalBeneficios >= limiteCupons);
   const transicoesPermitidas = campanha.proximasSituacoes
     .slice(0, 2)
     .filter((situacao) => usuarioPodeAlterarCampanha(perfil, podeGerenciar, campanha, situacao));
@@ -829,7 +1133,38 @@ function CampanhaDetalhe({
       <View style={estilos.linhaEntre}>
         <Selo tom={tomCampanha(campanha.situacao)}>{ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}</Selo>
         <Selo tom="brand">{ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Selo>
+        {limiteCuponsAtingido ? <Selo tom="warning">Limite atingido</Selo> : null}
       </View>
+
+      {limiteCupons ? (
+        <Cartao destaque={limiteCuponsAtingido}>
+          <View style={estilos.linhaEntre}>
+            <View style={{ flex: 1 }}>
+              <Rotulo>{limiteCuponsAtingido ? "Campanha fechada por limite" : "Limite de cupons"}</Rotulo>
+              <Titulo nivel={3}>
+                {detalhe.data.totalBeneficios}/{limiteCupons} cupons
+              </Titulo>
+            </View>
+            <Selo tom={limiteCuponsAtingido ? "warning" : "brand"}>{progressoCupons}%</Selo>
+          </View>
+          <View style={estilos.campanhaProgressoFundo}>
+            <View
+              style={[
+                estilos.campanhaProgressoBarra,
+                {
+                  width: `${progressoCupons}%`,
+                  backgroundColor: limiteCuponsAtingido ? colors.warning : colors.primary,
+                },
+              ]}
+            />
+          </View>
+          <Apoio>
+            {limiteCuponsAtingido
+              ? "O limite foi atingido. Essa campanha não aceita novos lançamentos de cupom."
+              : `Restam ${Math.max(0, limiteCupons - detalhe.data.totalBeneficios)} cupons para atingir o limite.`}
+          </Apoio>
+        </Cartao>
+      ) : null}
 
       {detalhe.data.sorteio ? (
         <Cartao destaque>
@@ -945,8 +1280,8 @@ function ClienteDetalhe({ id, onVoltar, onAbrirCampanha }: { id: string; onVolta
           {ficha.data.cartoes.length ? ficha.data.cartoes.map((item) => (
             <Pressable key={`${item.empresa}-${item.campanhaId}`} onPress={() => onAbrirCampanha(item.campanhaId)} accessibilityRole="button" accessibilityLabel={`Abrir ${item.campanha}`}>
               <Cartao>
-                <Titulo nivel={3}>{item.campanha}</Titulo>
-                <Apoio>{item.empresa} • {item.premio}</Apoio>
+                <Titulo nivel={3}>{item.premio}</Titulo>
+                <Apoio>{item.empresa} • {item.campanha}</Apoio>
                 <Selos atuais={item.selosAtuais} necessarios={item.selosNecessarios} />
                 {item.vezesCompletado > 0 ? <Apoio>Já completou {item.vezesCompletado} {item.vezesCompletado === 1 ? "vez" : "vezes"}.</Apoio> : null}
               </Cartao>
@@ -960,8 +1295,8 @@ function ClienteDetalhe({ id, onVoltar, onAbrirCampanha }: { id: string; onVolta
               <Cartao>
                 <View style={estilos.linhaEntre}>
                   <View style={{ flex: 1 }}>
-                    <Titulo nivel={3}>{item.campanha}</Titulo>
-                    <Apoio>{item.empresa} • {item.premio}</Apoio>
+                    <Titulo nivel={3}>{item.premio}</Titulo>
+                    <Apoio>{item.empresa} • {item.campanha}</Apoio>
                   </View>
                   <Selo tom={tomCampanha(item.situacao)}>{ROTULO_SITUACAO_CAMPANHA[item.situacao]}</Selo>
                 </View>
@@ -1049,12 +1384,15 @@ function Entregas() {
             <Linha rotulo="Código">{item.codigo}</Linha>
             <Linha rotulo="Campanha">{item.campanha}</Linha>
             <Apoio>{item.instrucoesRetirada ?? "Sem instrução específica"} • {desde(item.solicitadoEm)}</Apoio>
-            {item.situacao === "AGUARDANDO" ? (
-              <View style={estilos.acoesLinha}>
+            <View style={estilos.acoesLinha}>
+              <Botao titulo="Detalhes" icone="information-circle-outline" variante="secundario" compacto onPress={() => setDetalheSelecionada(item)} />
+              {item.situacao === "AGUARDANDO" ? (
+                <>
                 <Botao titulo="Confirmar" icone="checkmark" compacto onPress={() => setEntregaSelecionada(item)} />
                 <Botao titulo="Cancelar" variante="perigo" compacto onPress={() => setCancelarSelecionada(item)} />
-              </View>
-            ) : null}
+                </>
+              ) : null}
+            </View>
           </Cartao>
         )}
       />
@@ -1287,6 +1625,7 @@ function FormularioCompra({ cliente, onFechar }: { cliente: Cliente | null; onFe
 function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFechar: () => void }) {
   const [buscaCliente, setBuscaCliente] = useState("");
   const [clienteId, setClienteId] = useState("");
+  const [codigoCliente, setCodigoCliente] = useState("");
   const [campanhaId, setCampanhaId] = useState("");
   const [valor, setValor] = useState<number | null>(null);
   const [scannerAberto, setScannerAberto] = useState(false);
@@ -1296,6 +1635,7 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
   const registrar = useRegistrarCompra(() => {
     setBuscaCliente("");
     setClienteId("");
+    setCodigoCliente("");
     setCampanhaId("");
     setValor(null);
     onFechar();
@@ -1319,7 +1659,7 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
 
   return (
     <>
-      <Folha visivel={visivel} titulo="Registrar compra" onFechar={onFechar}>
+      <Folha visivel={visivel && !scannerAberto} titulo="Registrar compra" onFechar={onFechar}>
       <View style={estilos.linhaEntre}>
         <View style={{ flex: 1 }}>
           <Rotulo>Cliente</Rotulo>
@@ -1336,12 +1676,35 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
           setScannerAberto(true);
         }} />
       </View>
-      <Busca valor={buscaCliente} onChange={setBuscaCliente} placeholder="CPF, cartão, nome ou telefone" />
+      <Busca
+        valor={buscaCliente}
+        onChange={(texto) => {
+          setBuscaCliente(texto);
+          setCodigoCliente("");
+        }}
+        placeholder="CPF, cartão, nome ou telefone"
+      />
       {clientes.isLoading ? <CarregandoBloco /> : clientes.isError ? <ErroBloco /> : opcoesClientes.length ? (
-        <Seletor rotulo="Cliente" valor={clienteId || null} onChange={setClienteId} opcoes={opcoesClientes} coluna />
+        <Seletor
+          rotulo="Cliente"
+          valor={clienteId || null}
+          onChange={(valor) => {
+            setClienteId(valor);
+            setCodigoCliente("");
+          }}
+          opcoes={opcoesClientes}
+          coluna
+        />
       ) : (
         <Vazio texto={buscaCliente ? "Nenhum cliente encontrado para essa busca." : "Digite para buscar o cliente pelo nome, documento ou cartão."} />
       )}
+      {!clienteId && codigoCliente ? (
+        <Cartao destaque>
+          <Rotulo>QR lido</Rotulo>
+          <Texto>{codigoCliente}</Texto>
+          <Apoio>Se a pessoa existir em outra loja, o lançamento cria o vínculo nesta empresa.</Apoio>
+        </Cartao>
+      ) : null}
       {campanhas.isLoading ? <CarregandoBloco /> : campanhas.isError ? <ErroBloco /> : opcoesCampanhas.length ? (
         <Seletor rotulo="Campanha" valor={campanhaId || null} onChange={setCampanhaId} opcoes={opcoesCampanhas} coluna />
       ) : (
@@ -1349,8 +1712,13 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
       )}
       <CampoMoeda rotulo="Valor da compra" centavos={valor} onChange={setValor} />
       <Botao titulo="Registrar compra" icone="cash-outline" largura="cheia" carregando={registrar.isPending} onPress={() => {
-        if (!clienteId || !campanhaId || !valor) return avisar.erro("Selecione cliente, campanha e valor.");
-        registrar.mutate({ clienteId, campanhaId, valorCompra: valor });
+        if ((!clienteId && !codigoCliente) || !campanhaId || !valor) return avisar.erro("Selecione cliente ou leia o QR, campanha e valor.");
+        registrar.mutate({
+          clienteId: clienteId || undefined,
+          codigoCliente: codigoCliente || undefined,
+          campanhaId,
+          valorCompra: valor,
+        });
       }} />
       </Folha>
       <ScannerQrCliente
@@ -1358,6 +1726,7 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
         onFechar={() => setScannerAberto(false)}
         onLer={(valor) => {
           const busca = textoBuscaDoQr(valor);
+          setCodigoCliente(busca);
           setBuscaCliente(busca);
           setClienteId("");
           setScannerAberto(false);
@@ -1439,6 +1808,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
   const [selosNecessarios, setSelosNecessarios] = useState("10");
   const [valorPorCupom, setValorPorCupom] = useState<number | null>(2000);
   const [quantidadeGanhadores, setQuantidadeGanhadores] = useState("1");
+  const [limiteTotalCupons, setLimiteTotalCupons] = useState("");
   const [valorMinimoCompra, setValorMinimoCompra] = useState<number | null>(null);
   const [limiteDiarioCliente, setLimiteDiarioCliente] = useState("1");
   const [premio, setPremio] = useState("");
@@ -1465,6 +1835,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
     setSelosNecessarios("10");
     setValorPorCupom(2000);
     setQuantidadeGanhadores("1");
+    setLimiteTotalCupons("");
     setValorMinimoCompra(null);
     setLimiteDiarioCliente("1");
     setPremio("");
@@ -1486,6 +1857,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
     }
     setValorPorCupom(2000);
     setQuantidadeGanhadores("1");
+    setLimiteTotalCupons("");
     setLimiteDiarioCliente("20");
     setSorteio(dataInput(93));
   }
@@ -1496,6 +1868,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
     const nomePremio = premio.trim();
     const qtdPremio = inteiroCampo(quantidadePremio);
     const limiteDia = inteiroCampo(limiteDiarioCliente);
+    const limiteCupons = inteiroCampo(limiteTotalCupons);
     const dataInicio = dataFormulario(inicio, "inicio");
     const dataFim = dataFormulario(fim, "fim");
     const dataSorteio = isCartao ? null : dataFormulario(sorteio, "sorteio");
@@ -1538,6 +1911,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
     const ganhadores = inteiroCampo(quantidadeGanhadores);
     if (!valorPorCupom || valorPorCupom <= 0) return avisar.erro("Diga de quanto em quanto o cliente ganha um cupom.");
     if (!ganhadores || ganhadores < 1 || ganhadores > 50) return avisar.erro("Informe quantos ganhadores o sorteio terá.");
+    if (limiteTotalCupons.trim() && (!limiteCupons || limiteCupons < 1)) return avisar.erro("O limite total de cupons precisa ser maior que zero.");
     if (!dataSorteio) return avisar.erro("Informe a data do sorteio no formato AAAA-MM-DD.");
     if (dataSorteio.getTime() < dataFim.getTime()) return avisar.erro("O sorteio precisa ser depois do término da campanha.");
 
@@ -1551,6 +1925,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
       valorMinimoCompra: valorMinimoCompra || undefined,
       valorPorCupom,
       quantidadeGanhadores: ganhadores,
+      limiteTotalCupons: limiteCupons ?? undefined,
       limiteDiarioCliente: limiteDia,
       nomePremio,
       descricaoPremio: descricaoPremio.trim() || undefined,
@@ -1611,6 +1986,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
               <>
                 <CampoMoeda rotulo="A cada quanto ganha 1 cupom?" centavos={valorPorCupom} onChange={setValorPorCupom} dica="Mesmo padrão da web: valor em reais convertido para centavos." />
                 <Campo rotulo="Quantos ganhadores?" valor={quantidadeGanhadores} onChange={setQuantidadeGanhadores} teclado="number-pad" placeholder="1" dica="Mínimo 1, máximo 50." />
+                <Campo rotulo="Limite total de cupons" valor={limiteTotalCupons} onChange={(v) => setLimiteTotalCupons(v.replace(/\D/g, ""))} teclado="number-pad" placeholder="Opcional" dica="Ao atingir esse total, a campanha para de aceitar novos cupons." />
               </>
             )}
             <View style={estilos.gradeIndicadores}>
@@ -1638,7 +2014,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
       )}
 
       <Cartao destaque>
-        <Texto>{resumoNovaCampanha({ tipo, selosNecessarios, valorPorCupom, quantidadeGanhadores, valorMinimoCompra, premio })}</Texto>
+        <Texto>{resumoNovaCampanha({ tipo, selosNecessarios, valorPorCupom, quantidadeGanhadores, limiteTotalCupons, valorMinimoCompra, premio })}</Texto>
       </Cartao>
       <View style={estilos.acoesLinha}>
         <Botao titulo="Salvar rascunho" variante="secundario" carregando={criar.isPending} onPress={() => salvar(false)} />
@@ -1675,6 +2051,7 @@ function resumoNovaCampanha({
   selosNecessarios,
   valorPorCupom,
   quantidadeGanhadores,
+  limiteTotalCupons,
   valorMinimoCompra,
   premio,
 }: {
@@ -1682,6 +2059,7 @@ function resumoNovaCampanha({
   selosNecessarios: string;
   valorPorCupom: number | null;
   quantidadeGanhadores: string;
+  limiteTotalCupons: string;
   valorMinimoCompra: number | null;
   premio: string;
 }) {
@@ -1690,7 +2068,8 @@ function resumoNovaCampanha({
     return `Cada compra${minimo} dá 1 selo. Com ${inteiroCampo(selosNecessarios) ?? 10} selos, o cliente ganha ${premio.trim() || "o prêmio"}.`;
   }
   const ganhadores = inteiroCampo(quantidadeGanhadores) ?? 1;
-  return `A cada ${moeda(valorPorCupom ?? 0)}, 1 cupom. No fim, ${plural(ganhadores, "ganhador leva", "ganhadores levam")} ${premio.trim() || "o prêmio"}.`;
+  const limite = inteiroCampo(limiteTotalCupons);
+  return `A cada ${moeda(valorPorCupom ?? 0)}, 1 cupom. No fim, ${plural(ganhadores, "ganhador leva", "ganhadores levam")} ${premio.trim() || "o prêmio"}.${limite ? ` Limite de ${limite} cupons.` : ""}`;
 }
 
 function FormularioEntrega({ entrega, onFechar }: { entrega: Entrega | null; onFechar: () => void }) {
@@ -1728,7 +2107,7 @@ function FormularioEntrega({ entrega, onFechar }: { entrega: Entrega | null; onF
 
   return (
     <>
-      <Folha visivel={Boolean(entrega)} titulo="Confirmar entrega" onFechar={onFechar} grande>
+      <Folha visivel={Boolean(entrega) && !scannerAberto} titulo="Confirmar entrega" onFechar={onFechar} grande>
         <Cartao style={{ gap: spacing.sm }}>
           <Titulo nivel={3}>{entrega?.premio}</Titulo>
           <Apoio>{entrega?.campanha}</Apoio>
@@ -1978,22 +2357,50 @@ function GraficoMovimento({ pontos }: { pontos: Array<{ dia: string; valor: numb
   if (!pontos.length || maximo === 0) return <Vazio texto="Nenhuma compra registrada neste período." />;
 
   const passo = pontos.length > 14 ? Math.ceil(pontos.length / 6) : 1;
+  const total = pontos.reduce((soma, ponto) => soma + ponto.valor, 0);
+  const diasComMovimento = pontos.filter((ponto) => ponto.valor > 0).length;
+  const media = diasComMovimento ? Math.round(total / diasComMovimento) : 0;
+  const melhorDia = pontos.reduce((melhor, ponto) => (ponto.valor > melhor.valor ? ponto : melhor), pontos[0]);
+  const alturaMedia = Math.max(6, Math.round((media / maximo) * 112));
 
   return (
-    <View style={estilos.grafico}>
-      <View style={estilos.graficoBarras}>
-        {pontos.map((ponto, indice) => {
-          const altura = Math.max(6, Math.round((ponto.valor / maximo) * 112));
-          const mostrarRotulo = indice % passo === 0 || indice === pontos.length - 1;
-          return (
-            <View key={ponto.dia} style={estilos.graficoColuna}>
-              <Apoio numberOfLines={1} style={estilos.graficoValor}>{ponto.valor > 0 ? moeda(ponto.valor) : ""}</Apoio>
-              <View style={[estilos.graficoBarra, { height: altura }]} />
-              <Apoio style={estilos.graficoRotulo}>{mostrarRotulo ? diaMes(ponto.dia) : ""}</Apoio>
-            </View>
-          );
-        })}
+    <View style={{ gap: spacing.md }}>
+      <View style={estilos.graficoResumo}>
+        <MiniDado rotulo="Total" valor={moeda(total)} />
+        <MiniDado rotulo="Média/dia" valor={moeda(media)} />
+        <MiniDado rotulo="Dias ativos" valor={`${diasComMovimento}/${pontos.length}`} />
+        <MiniDado rotulo="Melhor dia" valor={`${diaMes(melhorDia.dia)} · ${moeda(melhorDia.valor)}`} />
       </View>
+      <View style={estilos.grafico}>
+        <View pointerEvents="none" style={estilos.graficoEscala}>
+          <Apoio style={estilos.graficoEscalaTexto}>{moeda(maximo)}</Apoio>
+          <Apoio style={estilos.graficoEscalaTexto}>{moeda(Math.round(maximo / 2))}</Apoio>
+          <Apoio style={estilos.graficoEscalaTexto}>R$ 0</Apoio>
+        </View>
+        <View style={estilos.graficoPlot}>
+          <View style={estilos.graficoBarras}>
+            {pontos.map((ponto, indice) => {
+              const altura = Math.max(6, Math.round((ponto.valor / maximo) * 112));
+              const mostrarRotulo = indice % passo === 0 || indice === pontos.length - 1;
+              const destaque = ponto.dia === melhorDia.dia;
+              return (
+                <View key={ponto.dia} style={estilos.graficoColuna}>
+                  <Apoio numberOfLines={1} style={estilos.graficoValor}>{ponto.valor > 0 ? moeda(ponto.valor) : ""}</Apoio>
+                  <View style={[estilos.graficoBarra, destaque && estilos.graficoBarraDestaque, { height: altura }]} />
+                  <Apoio style={estilos.graficoRotulo}>{mostrarRotulo ? diaMes(ponto.dia) : ""}</Apoio>
+                </View>
+              );
+            })}
+          </View>
+          <View pointerEvents="none" style={estilos.graficoGrade}>
+            <View style={estilos.graficoLinhaGrade} />
+            <View style={estilos.graficoLinhaGrade} />
+            <View style={estilos.graficoLinhaGrade} />
+          </View>
+          <View pointerEvents="none" style={[estilos.graficoLinhaMedia, { bottom: 26 + alturaMedia }]} />
+        </View>
+      </View>
+      <Apoio>Linha verde: média dos dias com movimento. Barra escura: melhor dia.</Apoio>
     </View>
   );
 }
@@ -2075,6 +2482,7 @@ function CarregandoTela() {
   return (
     <SafeAreaView style={estilos.safe}>
       <View style={estilos.carregandoTela}>
+        <LogoMarca grande />
         <ActivityIndicator size="large" color={colors.primary} />
       </View>
     </SafeAreaView>
@@ -2205,6 +2613,17 @@ const estilos = StyleSheet.create({
     backgroundColor: colors.primary,
     borderWidth: borderWidth.hairline,
     borderColor: colors.heading,
+  },
+  limiteCuponsCard: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.accent,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.primary,
   },
   campanhaFaixa: {
     flexDirection: "row",
@@ -2435,25 +2854,75 @@ const estilos = StyleSheet.create({
   },
   miniDado: {
     flex: 1,
+    minWidth: "46%",
     gap: 2,
     padding: spacing.sm,
     backgroundColor: colors.surfaceMuted,
     borderWidth: borderWidth.hairline,
     borderColor: colors.border,
   },
+  graficoResumo: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
   grafico: {
     minHeight: 170,
-    justifyContent: "flex-end",
+    flexDirection: "row",
+    alignItems: "stretch",
+    overflow: "hidden",
+  },
+  graficoPlot: {
+    flex: 1,
+    minWidth: 0,
+    position: "relative",
+    overflow: "hidden",
+  },
+  graficoGrade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 18,
+    bottom: 26,
+    justifyContent: "space-between",
+    zIndex: 3,
+    elevation: 3,
+  },
+  graficoLinhaGrade: {
+    height: 2,
+    backgroundColor: colors.heading,
+    opacity: 0.24,
+  },
+  graficoEscala: {
+    width: 44,
+    paddingTop: 18,
+    paddingBottom: 26,
+    justifyContent: "space-between",
+  },
+  graficoEscalaTexto: {
+    fontSize: 9,
+    backgroundColor: colors.background,
+    paddingRight: 4,
+  },
+  graficoLinhaMedia: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: colors.primary,
+    opacity: 0.95,
+    zIndex: 4,
+    elevation: 4,
   },
   graficoBarras: {
     minHeight: 150,
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: spacing.xs,
+    gap: 2,
   },
   graficoColuna: {
     flex: 1,
-    minWidth: 14,
+    minWidth: 0,
     alignItems: "center",
     justifyContent: "flex-end",
     gap: spacing.xs,
@@ -2466,6 +2935,9 @@ const estilos = StyleSheet.create({
     backgroundColor: colors.primary,
     borderTopLeftRadius: 4,
     borderTopRightRadius: 4,
+  },
+  graficoBarraDestaque: {
+    backgroundColor: colors.heading,
   },
   graficoRotulo: {
     minHeight: 16,
@@ -2493,24 +2965,140 @@ const estilos = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    gap: spacing.md,
   },
   cartaoCliente: {
-    minHeight: 154,
+    minHeight: 196,
     backgroundColor: colors.primary,
     padding: spacing.lg,
-    gap: spacing.md,
+    gap: spacing.xl,
+    borderRadius: 28,
+    overflow: "hidden",
+    position: "relative",
+    borderWidth: borderWidth.hairline,
+    borderColor: "rgba(255,255,255,0.55)",
+  },
+  cartaoClienteBrilho: {
+    position: "absolute",
+    top: -80,
+    right: -72,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  cartaoClienteCirculoMaior: {
+    position: "absolute",
+    top: 58,
+    right: 34,
+    width: 98,
+    height: 98,
+    borderRadius: 49,
+    borderWidth: borderWidth.hairline,
+    borderColor: "rgba(255,255,255,0.24)",
+  },
+  cartaoClienteCirculoMenor: {
+    position: "absolute",
+    top: 82,
+    right: 60,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: borderWidth.hairline,
+    borderColor: "rgba(255,255,255,0.28)",
   },
   cartaoClienteTopo: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
+    gap: spacing.md,
+  },
+  cartaoClienteRotulo: {
+    color: colors.primaryForeground,
+    textTransform: "uppercase",
+    letterSpacing: 4,
+  },
+  cartaoClienteTitulo: {
+    color: colors.primaryForeground,
+    fontSize: fontSize.xl,
+  },
+  cartaoClienteApoio: {
+    color: colors.primaryForeground,
+    opacity: 0.72,
+  },
+  cartaoClienteRodape: {
+    gap: spacing.xs,
+    marginTop: spacing.sm,
   },
   codigoCartao: {
     color: colors.primaryForeground,
-    fontSize: fontSize["2xl"],
+    fontSize: fontSize["3xl"],
     fontWeight: fontWeight.bold,
     letterSpacing: 0,
     fontVariant: ["tabular-nums"],
+  },
+  qrLocal: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 6,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    borderWidth: borderWidth.hairline,
+    borderColor: "rgba(255,255,255,0.85)",
+  },
+  acoesTopoPortal: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  sininho: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    position: "relative",
+  },
+  sininhoBadge: {
+    position: "absolute",
+    right: 5,
+    top: 5,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+  },
+  sininhoBadgeTexto: {
+    color: colors.primaryForeground,
+    fontSize: fontSize.xs,
+    fontWeight: fontWeight.bold,
+    fontVariant: ["tabular-nums"],
+  },
+  notificacaoPortal: {
+    flexDirection: "row",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  notificacaoPortalNova: {
+    borderColor: colors.primary,
+    backgroundColor: colors.accent,
+  },
+  notificacaoPortalIcone: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
   },
   toasts: {
     position: "absolute",

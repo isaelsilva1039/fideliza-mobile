@@ -149,6 +149,7 @@ export interface NovaCampanha {
   selosNecessarios?: number;
   valorPorCupom?: number;
   quantidadeGanhadores?: number;
+  limiteTotalCupons?: number;
   limiteDiarioCliente?: number;
   nomePremio: string;
   descricaoPremio?: string;
@@ -236,7 +237,8 @@ export function editarCliente(id: string, entrada: EdicaoCliente): Promise<c.Cli
 
 export interface NovaCompra {
   campanhaId: string;
-  clienteId: string;
+  clienteId?: string;
+  codigoCliente?: string;
   /** Centavos. O servidor valida `@Positive`, então zero é recusado. */
   valorCompra: number;
 }
@@ -346,4 +348,20 @@ export function pedirCodigo(documento: string): Promise<c.PedidoDeCodigo> {
 
 export function consultarPortal(pedidoId: string, codigo: string): Promise<c.CartaoDoPortal> {
   return api.post<c.CartaoDoPortal>("/api/portal/consulta", { pedidoId, codigo });
+}
+
+export function listarNotificacoesPortal(
+  pedidoId: string,
+): Promise<c.NotificacaoDoCliente[]> {
+  return api.post<c.NotificacaoDoCliente[]>("/api/portal/notificacoes", { pedidoId });
+}
+
+export function marcarNotificacaoPortalComoLida(
+  pedidoId: string,
+  notificacaoId: string,
+): Promise<c.NotificacaoDoCliente> {
+  return api.patch<c.NotificacaoDoCliente>(
+    `/api/portal/notificacoes/${notificacaoId}/lida`,
+    { pedidoId },
+  );
 }

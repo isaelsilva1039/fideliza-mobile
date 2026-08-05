@@ -74,7 +74,7 @@ export const api = {
   createTenant: (input: { nomeFantasia: string; razaoSocial: string; documento: string; telefone?: string; email?: string; cidade?: string; uf?: string }) => request<Tenant>("/api/empresas", { method: "POST", ...json(input) }),
   updateTenant: (id: string, input: Partial<Tenant>) => request<Tenant>(`/api/empresas/${id}`, { method: "PATCH", ...json(input) }),
   getAudit: (days = 30) => request<Audit>(`/api/auditoria${params({ dias: days, pagina: 1, tamanho: 30 })}`),
-  registerPurchase: (input: { campanhaId: string; clienteId: string; valorCompra: number }) => request<{ mensagem: string }>("/api/lancamentos", { method: "POST", ...json(input) }),
+  registerPurchase: (input: { campanhaId: string; clienteId?: string; codigoCliente?: string; valorCompra: number }) => request<{ mensagem: string }>("/api/lancamentos", { method: "POST", ...json(input) }),
   cancelPurchase: (id: string, motivo: string) => request<void>(`/api/lancamentos/${id}/cancelar`, { method: "PATCH", ...json({ motivo }) }),
   cancelDelivery: (id: string, observacao?: string) => request<void>(`/api/entregas/${id}/cancelar`, { method: "PATCH", ...json({ observacao }) }),
   async requestPortalCode(documento: string) { const value = await request<PortalCodeResponse>("/api/portal/codigo", { method: "POST", ...json({ documento }) }); return { requestId: value.pedidoId, phoneHint: value.finalDoTelefone, demoCode: value.codigoDemonstracao }; },

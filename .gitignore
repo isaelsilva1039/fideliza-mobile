@@ -9,6 +9,9 @@ dist/
 web-build/
 expo-env.d.ts
 
+# Sobras de build movidas para a lixeira das ferramentas
+.codex-trash/
+
 # Native
 .kotlin/
 *.orig.*

@@ -115,6 +115,9 @@ export function CampanhaDetalhe({ id, aoVoltar }: { id: string; aoVoltar: () => 
                   {campanha.regra.quantidadeGanhadores !== undefined ? (
                     <Linha rotulo="Ganhadores">{campanha.regra.quantidadeGanhadores}</Linha>
                   ) : null}
+                  {campanha.regra.limiteTotalCupons !== undefined ? (
+                    <Linha rotulo="Limite total de cupons">{campanha.regra.limiteTotalCupons}</Linha>
+                  ) : null}
                   {campanha.regra.limiteDiarioCliente !== undefined ? (
                     <Linha rotulo="Limite por cliente/dia">{campanha.regra.limiteDiarioCliente}</Linha>
                   ) : null}

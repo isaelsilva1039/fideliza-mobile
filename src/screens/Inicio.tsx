@@ -27,7 +27,7 @@ import { desde, diaMes, moeda, plural, telefone, variacao } from "../lib/format"
 import { ROTULO_SITUACAO_CAMPANHA, type PontoDoDia, type ResumoInicio } from "../services/contrato";
 import { useNavegacao } from "../stores/navegacao";
 import { useEmpresas, useSession } from "../stores/session";
-import { colors, fontSize, spacing } from "../theme";
+import { borderWidth, colors, fontSize, spacing } from "../theme";
 
 /**
  * O início.
@@ -87,6 +87,34 @@ export function Inicio() {
                 </Secao>
               ) : null}
 
+              {resumo.premiosEntregues.length > 0 ? (
+                <Secao titulo="Prêmios entregues">
+                  {resumo.premiosEntregues.slice(0, 4).map((premio) => (
+                    <Pressable
+                      key={premio.id}
+                      onPress={() => abrir({ nome: "entregas" })}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Ver entrega de ${premio.premio}`}
+                    >
+                      <Cartao>
+                        <View style={estilos.entreLinhas}>
+                          <Icone nome="checkmark-done-outline" cor={colors.primary} />
+                          <View style={{ flex: 1 }}>
+                            <Titulo nivel={3} numberOfLines={1}>
+                              {premio.premio}
+                            </Titulo>
+                            <Apoio numberOfLines={2}>
+                              {premio.cliente} · recebeu: {premio.recebedor} · {desde(premio.entregueEm)}
+                            </Apoio>
+                          </View>
+                          <Icone nome="chevron-forward" />
+                        </View>
+                      </Cartao>
+                    </Pressable>
+                  ))}
+                </Secao>
+              ) : null}
+
               {resumo.quaseCompletando.length > 0 ? (
                 <Secao titulo="Quase completando">
                   {resumo.quaseCompletando.slice(0, 5).map((item) => (
@@ -133,18 +161,18 @@ export function Inicio() {
                       key={campanha.id}
                       onPress={() => abrir({ nome: "campanha", id: campanha.id })}
                       accessibilityRole="button"
-                      accessibilityLabel={campanha.nome}
+                      accessibilityLabel={campanha.premio}
                     >
                       <Cartao>
                         <View style={estilos.entreLinhas}>
                           <Titulo nivel={3} style={{ flex: 1 }} numberOfLines={1}>
-                            {campanha.nome}
+                            {campanha.premio}
                           </Titulo>
                           <Selo tom={campanha.situacao === "ATIVA" ? "success" : "neutral"}>
                             {ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}
                           </Selo>
                         </View>
-                        <Apoio numberOfLines={1}>Prêmio: {campanha.premio}</Apoio>
+                        <Apoio numberOfLines={1}>{campanha.nome}</Apoio>
                         <Apoio>{plural(campanha.participantes, "participante", "participantes")}</Apoio>
                       </Cartao>
                     </Pressable>
@@ -369,22 +397,58 @@ function Indicador({
 function Grafico({ pontos }: { pontos: PontoDoDia[] }) {
   const maximo = Math.max(...pontos.map((p) => p.valor), 1);
   const meio = Math.floor(pontos.length / 2);
+  const total = pontos.reduce((soma, ponto) => soma + ponto.valor, 0);
+  const diasComMovimento = pontos.filter((ponto) => ponto.valor > 0).length;
+  const media = diasComMovimento ? Math.round(total / diasComMovimento) : 0;
+  const melhorDia = pontos.reduce((melhor, ponto) => (ponto.valor > melhor.valor ? ponto : melhor), pontos[0]);
+  const alturaMedia = Math.max(2, (media / maximo) * 100);
 
   return (
     <View style={{ gap: spacing.sm }}>
+      <View style={estilos.resumoGrafico}>
+        <View style={estilos.itemResumoGrafico}>
+          <Apoio>Total</Apoio>
+          <Texto numberOfLines={1} style={estilos.valorResumoGrafico}>{moeda(total)}</Texto>
+        </View>
+        <View style={estilos.itemResumoGrafico}>
+          <Apoio>Média/dia</Apoio>
+          <Texto numberOfLines={1} style={estilos.valorResumoGrafico}>{moeda(media)}</Texto>
+        </View>
+        <View style={estilos.itemResumoGrafico}>
+          <Apoio>Dias ativos</Apoio>
+          <Texto numberOfLines={1} style={estilos.valorResumoGrafico}>{diasComMovimento}/{pontos.length}</Texto>
+        </View>
+        <View style={estilos.itemResumoGrafico}>
+          <Apoio>Melhor dia</Apoio>
+          <Texto numberOfLines={1} style={estilos.valorResumoGrafico}>{diaMes(melhorDia.dia)} · {moeda(melhorDia.valor)}</Texto>
+        </View>
+      </View>
       <View style={estilos.grafico}>
-        {pontos.map((ponto) => (
-          <View
-            key={ponto.dia}
-            style={[
-              estilos.barra,
-              {
-                height: `${Math.max(2, (ponto.valor / maximo) * 100)}%`,
-                backgroundColor: ponto.valor > 0 ? colors.primary : colors.border,
-              },
-            ]}
-          />
-        ))}
+        <View pointerEvents="none" style={estilos.graficoEscala}>
+          <Apoio style={estilos.graficoEscalaTexto}>{moeda(maximo)}</Apoio>
+          <Apoio style={estilos.graficoEscalaTexto}>{moeda(Math.round(maximo / 2))}</Apoio>
+          <Apoio style={estilos.graficoEscalaTexto}>R$ 0</Apoio>
+        </View>
+        <View style={estilos.graficoPlot}>
+          {pontos.map((ponto) => (
+            <View
+              key={ponto.dia}
+              style={[
+                estilos.barra,
+                {
+                  height: `${Math.max(2, (ponto.valor / maximo) * 100)}%`,
+                  backgroundColor: ponto.dia === melhorDia.dia ? colors.heading : ponto.valor > 0 ? colors.primary : colors.border,
+                },
+              ]}
+            />
+          ))}
+          <View pointerEvents="none" style={estilos.graficoGrade}>
+            <View style={estilos.graficoLinhaGrade} />
+            <View style={estilos.graficoLinhaGrade} />
+            <View style={estilos.graficoLinhaGrade} />
+          </View>
+          <View pointerEvents="none" style={[estilos.graficoLinhaMedia, { bottom: `${alturaMedia}%` }]} />
+        </View>
       </View>
       <View style={estilos.eixo}>
         <Apoio style={{ fontSize: fontSize.xs }}>{diaMes(pontos[0]?.dia)}</Apoio>
@@ -393,6 +457,7 @@ function Grafico({ pontos }: { pontos: PontoDoDia[] }) {
       </View>
       <Divisor />
       <Linha rotulo="Maior dia do período">{moeda(maximo)}</Linha>
+      <Apoio>Linha verde: média dos dias com movimento. Barra escura: melhor dia.</Apoio>
     </View>
   );
 }
@@ -418,18 +483,81 @@ const estilos = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
   },
+  resumoGrafico: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  itemResumoGrafico: {
+    flexGrow: 1,
+    flexBasis: "46%",
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    gap: 2,
+  },
+  valorResumoGrafico: {
+    fontWeight: "600",
+  },
   grafico: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 2,
     height: 90,
+    overflow: "hidden",
+  },
+  graficoPlot: {
+    flex: 1,
+    minWidth: 0,
+    height: "100%",
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 2,
+    position: "relative",
+    overflow: "hidden",
+  },
+  graficoGrade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: "space-between",
+    zIndex: 3,
+    elevation: 3,
+  },
+  graficoLinhaGrade: {
+    height: 2,
+    backgroundColor: colors.heading,
+    opacity: 0.24,
+  },
+  graficoEscala: {
+    width: 44,
+    height: "100%",
+    justifyContent: "space-between",
+  },
+  graficoEscalaTexto: {
+    fontSize: 9,
+    backgroundColor: colors.background,
+    paddingRight: 4,
+  },
+  graficoLinhaMedia: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: colors.primary,
+    opacity: 0.95,
+    zIndex: 4,
+    elevation: 4,
   },
   barra: {
     flex: 1,
-    minWidth: 2,
+    minWidth: 0,
   },
   eixo: {
     flexDirection: "row",
     justifyContent: "space-between",
+    marginLeft: 44,
   },
 });

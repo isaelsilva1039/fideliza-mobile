@@ -1,12 +1,14 @@
 import { useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import QRCode from "react-native-qrcode-svg";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import { Tela } from "../components/Tela";
 import {
   Alerta,
   Apoio,
   Botao,
+  BotaoIcone,
   Campo,
   Cartao,
   Divisor,
@@ -21,7 +23,7 @@ import {
 } from "../components/ui";
 import { data, documento as formatarDocumento, plural, primeiroNome } from "../lib/format";
 import { errosPorCampo, mensagemDoErro } from "../lib/api/errors";
-import { consultarPortal, pedirCodigo } from "../services";
+import { consultarPortal, listarNotificacoesPortal, marcarNotificacaoPortalComoLida, pedirCodigo } from "../services";
 import type { CartaoDoPortal, PedidoDeCodigo } from "../services/contrato";
 import { avisar } from "../stores/avisos";
 import { colors, spacing } from "../theme";
@@ -40,19 +42,19 @@ import { colors, spacing } from "../theme";
 type Passo =
   | { nome: "documento" }
   | { nome: "codigo"; pedido: PedidoDeCodigo; documento: string }
-  | { nome: "cartao"; dados: CartaoDoPortal };
+  | { nome: "cartao"; pedido: PedidoDeCodigo; dados: CartaoDoPortal };
 
 export function Portal({ aoSair }: { aoSair: () => void }) {
   const [passo, setPasso] = useState<Passo>({ nome: "documento" });
 
   return passo.nome === "cartao" ? (
-    <Cartoes dados={passo.dados} aoSair={aoSair} aoTrocar={() => setPasso({ nome: "documento" })} />
+    <Cartoes pedido={passo.pedido} dados={passo.dados} aoSair={aoSair} aoTrocar={() => setPasso({ nome: "documento" })} />
   ) : passo.nome === "codigo" ? (
     <ConferirCodigo
       pedido={passo.pedido}
       documento={passo.documento}
       aoVoltar={() => setPasso({ nome: "documento" })}
-      aoConfirmar={(dados) => setPasso({ nome: "cartao", dados })}
+      aoConfirmar={(dados) => setPasso({ nome: "cartao", pedido: passo.pedido, dados })}
     />
   ) : (
     <PedirCodigo
@@ -219,14 +221,57 @@ function ConferirCodigo({
  * lado sem dizer que são de lojas diferentes.
  */
 function Cartoes({
+  pedido,
   dados,
   aoSair,
   aoTrocar,
 }: {
+  pedido: PedidoDeCodigo;
   dados: CartaoDoPortal;
   aoSair: () => void;
   aoTrocar: () => void;
 }) {
+  const [cartao, setCartao] = useState(dados);
+  const [lendoNotificacaoId, setLendoNotificacaoId] = useState<string | null>(null);
+  const [mostrandoNotificacoes, setMostrandoNotificacoes] = useState(false);
+  const [atualizandoNotificacoes, setAtualizandoNotificacoes] = useState(false);
+
+  async function marcarComoLida(id: string) {
+    const atual = cartao.notificacoes.find((item) => item.id === id);
+    if (!atual || atual.lidaEm) return;
+
+    setLendoNotificacaoId(id);
+    try {
+      const atualizada = await marcarNotificacaoPortalComoLida(pedido.pedidoId, id);
+      const notificacoes = cartao.notificacoes.map((item) =>
+        item.id === atualizada.id ? atualizada : item,
+      );
+      setCartao({
+        ...cartao,
+        notificacoes,
+        notificacoesNaoLidas: notificacoes.filter((item) => !item.lidaEm).length,
+      });
+    } catch (erro) {
+      avisar.erro(mensagemDoErro(erro));
+    } finally {
+      setLendoNotificacaoId(null);
+    }
+  }
+
+  async function atualizarNotificacoes() {
+    setAtualizandoNotificacoes(true);
+    try {
+      const notificacoes = await listarNotificacoesPortal(pedido.pedidoId);
+      setCartao({
+        ...cartao,
+        notificacoes,
+        notificacoesNaoLidas: notificacoes.filter((item) => !item.lidaEm).length,
+      });
+    } finally {
+      setAtualizandoNotificacoes(false);
+    }
+  }
+
   const porEmpresa = useMemo(() => {
     const mapa = new Map<
       string,
@@ -246,27 +291,83 @@ function Cartoes({
       return grupo;
     };
 
-    dados.cartoes.forEach((item) => garantir(item.empresa).cartoes.push(item));
-    dados.sorteios.forEach((item) => garantir(item.empresa).sorteios.push(item));
-    dados.premios.forEach((item) => garantir(item.empresa).premios.push(item));
+    cartao.cartoes.forEach((item) => garantir(item.empresa).cartoes.push(item));
+    cartao.sorteios.forEach((item) => garantir(item.empresa).sorteios.push(item));
+    cartao.premios.forEach((item) => garantir(item.empresa).premios.push(item));
 
     return [...mapa.entries()];
-  }, [dados]);
+  }, [cartao]);
 
   const vazio = porEmpresa.length === 0;
 
+  if (mostrandoNotificacoes) {
+    return (
+      <Tela
+        titulo="Notificações"
+        subtitulo={cartao.empresa}
+        aoVoltar={() => setMostrandoNotificacoes(false)}
+        aoAtualizar={() => void atualizarNotificacoes()}
+        atualizando={atualizandoNotificacoes}
+      >
+        <ListaNotificacoes
+          cartao={cartao}
+          lendoNotificacaoId={lendoNotificacaoId}
+          onMarcarComoLida={marcarComoLida}
+        />
+      </Tela>
+    );
+  }
+
   return (
     <Tela
-      titulo={`Olá, ${primeiroNome(dados.primeiroNome)}`}
-      subtitulo={`Cartão ${dados.codigoCartao}`}
+      titulo={`Olá, ${primeiroNome(cartao.primeiroNome)}`}
+      subtitulo={`Cartão ${cartao.codigoCartao}`}
       aoVoltar={aoSair}
-      acoes={<Botao titulo="Trocar" variante="sutil" compacto onPress={aoTrocar} />}
+      acoes={
+        <View style={estilos.acoesTopo}>
+          <View>
+            <BotaoIcone
+              icone={cartao.notificacoesNaoLidas > 0 ? "notifications" : "notifications-outline"}
+              rotulo={
+                cartao.notificacoesNaoLidas > 0
+                  ? `${cartao.notificacoesNaoLidas} notificações novas`
+                  : "Notificações"
+              }
+              onPress={() => setMostrandoNotificacoes(true)}
+            />
+            {cartao.notificacoesNaoLidas > 0 ? (
+              <View style={estilos.badgeSininho}>
+                <Texto style={estilos.badgeSininhoTexto}>
+                  {cartao.notificacoesNaoLidas > 9 ? "9+" : cartao.notificacoesNaoLidas}
+                </Texto>
+              </View>
+            ) : null}
+          </View>
+          <Botao titulo="Trocar" variante="sutil" compacto onPress={aoTrocar} />
+        </View>
+      }
     >
-      {/* Prêmio a retirar é a única coisa aqui que pede ação do cliente, então
-          vem antes de tudo — inclusive antes dos selos. */}
-      {dados.premios.length > 0 ? (
-        <Secao titulo={plural(dados.premios.length, "prêmio para retirar", "prêmios para retirar")}>
-          {dados.premios.map((premio) => (
+      <View style={estilos.cartaoCliente}>
+        <View style={estilos.cartaoClienteBrilho} />
+        <View style={estilos.cartaoClienteCirculoMaior} />
+        <View style={estilos.cartaoClienteCirculoMenor} />
+        <View style={estilos.cartaoClienteTopo}>
+          <View style={{ flex: 1, gap: spacing.xs }}>
+            <Rotulo style={estilos.cartaoClienteRotulo}>Cartão</Rotulo>
+            <Titulo style={estilos.cartaoClienteTitulo}>Fideliza+</Titulo>
+            <Apoio style={estilos.cartaoClienteApoio}>Cartão único do cliente</Apoio>
+          </View>
+          <QrCodeLocal value={cartao.codigoCartao} size={92} />
+        </View>
+        <View style={{ gap: spacing.xs }}>
+          <Apoio style={estilos.cartaoClienteApoio}>Código do cartão</Apoio>
+          <Texto style={estilos.codigoCartao}>{cartao.codigoCartao}</Texto>
+        </View>
+      </View>
+
+      {cartao.premios.length > 0 ? (
+        <Secao titulo={plural(cartao.premios.length, "prêmio para retirar", "prêmios para retirar")}>
+          {cartao.premios.map((premio) => (
             <Cartao key={premio.id} destaque>
               <Titulo nivel={2}>{premio.premio}</Titulo>
               <Apoio>
@@ -328,7 +429,7 @@ function Cartoes({
           })}
 
           {grupo.sorteios.map((sorteio) => (
-            <Cartao key={`${sorteio.campanhaId}-sorteio`} destaque={sorteio.ganhou}>
+            <Cartao key={`${sorteio.campanhaId}-sorteio`} destaque={sorteio.ganhou || (!sorteio.sorteado && sorteio.situacao === "ENCERRADA")}>
               <View style={estilos.linhaTitulo}>
                 <Titulo nivel={3} style={{ flex: 1 }} numberOfLines={2}>
                   {sorteio.campanha}
@@ -337,11 +438,17 @@ function Cartoes({
                   <Selo tom="success">Você ganhou</Selo>
                 ) : sorteio.sorteado ? (
                   <Selo tom="neutral">Sorteado</Selo>
+                ) : sorteio.situacao === "ENCERRADA" ? (
+                  <Selo tom="warning">Aguardando sorteio</Selo>
                 ) : null}
               </View>
               <Apoio>Prêmio: {sorteio.premio}</Apoio>
               <Linha rotulo="Seus cupons">
-                <Texto style={{ fontVariant: ["tabular-nums"] }}>{sorteio.cupons}</Texto>
+                <Texto style={{ fontVariant: ["tabular-nums"] }}>
+                  {sorteio.limiteTotalCupons
+                    ? `${sorteio.cupons}/${sorteio.limiteTotalCupons}`
+                    : sorteio.cupons}
+                </Texto>
               </Linha>
               {sorteio.sorteiaEm && !sorteio.sorteado ? (
                 <Linha rotulo="Sorteio em">{data(sorteio.sorteiaEm)}</Linha>
@@ -349,11 +456,75 @@ function Cartoes({
               {sorteio.sorteado && !sorteio.ganhou ? (
                 <Apoio>Este sorteio já foi realizado. Boa sorte na próxima.</Apoio>
               ) : null}
+              {!sorteio.sorteado && sorteio.situacao === "ENCERRADA" ? (
+                <Apoio>A campanha encerrou e seus cupons já estão garantidos. Agora é só aguardar a loja realizar o sorteio.</Apoio>
+              ) : null}
             </Cartao>
           ))}
         </View>
       ))}
     </Tela>
+  );
+}
+
+function ListaNotificacoes({
+  cartao,
+  lendoNotificacaoId,
+  onMarcarComoLida,
+}: {
+  cartao: CartaoDoPortal;
+  lendoNotificacaoId: string | null;
+  onMarcarComoLida: (id: string) => Promise<void>;
+}) {
+  if (cartao.notificacoes.length === 0) {
+    return (
+      <Cartao>
+        <View style={{ flex: 1, gap: spacing.xs }}>
+          <Titulo>Nenhuma notificação no momento</Titulo>
+          <Apoio>Quando a loja lançar campanha, selo ou cupom, aparece aqui.</Apoio>
+        </View>
+      </Cartao>
+    );
+  }
+
+  return (
+    <Secao titulo="Notificações">
+      {cartao.notificacoesNaoLidas > 0 ? (
+        <Selo tom="brand">
+          {cartao.notificacoesNaoLidas} {cartao.notificacoesNaoLidas === 1 ? "nova" : "novas"}
+        </Selo>
+      ) : null}
+      {cartao.notificacoes.map((notificacao) => {
+        const lida = Boolean(notificacao.lidaEm);
+        return (
+          <Pressable
+            key={notificacao.id}
+            disabled={lida || lendoNotificacaoId === notificacao.id}
+            onPress={() => void onMarcarComoLida(notificacao.id)}
+            style={[estilos.notificacao, !lida && estilos.notificacaoNova]}
+          >
+            <View style={{ flex: 1, gap: spacing.xs }}>
+              <Titulo nivel={3}>{notificacao.titulo}</Titulo>
+              <Apoio>{notificacao.mensagem}</Apoio>
+              <Rotulo>{lida ? "Lida" : "Toque para marcar como lida"}</Rotulo>
+            </View>
+          </Pressable>
+        );
+      })}
+    </Secao>
+  );
+}
+
+function QrCodeLocal({ value, size }: { value: string; size: number }) {
+  return (
+    <View style={[estilos.qrLocal, { width: size, height: size }]}>
+      <QRCode
+        value={value || "FIDELIZA"}
+        size={size - 14}
+        backgroundColor="#FFFFFF"
+        color="#000000"
+      />
+    </View>
   );
 }
 
@@ -371,5 +542,112 @@ const estilos = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     gap: spacing.sm,
+  },
+  cartaoCliente: {
+    minHeight: 196,
+    padding: spacing.lg,
+    gap: spacing.xl,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    overflow: "hidden",
+    position: "relative",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.55)",
+  },
+  cartaoClienteBrilho: {
+    position: "absolute",
+    top: -80,
+    right: -72,
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  cartaoClienteCirculoMaior: {
+    position: "absolute",
+    top: 58,
+    right: 34,
+    width: 98,
+    height: 98,
+    borderRadius: 49,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.24)",
+  },
+  cartaoClienteCirculoMenor: {
+    position: "absolute",
+    top: 82,
+    right: 60,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)",
+  },
+  cartaoClienteTopo: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: spacing.md,
+  },
+  cartaoClienteRotulo: {
+    color: colors.primaryForeground,
+    textTransform: "uppercase",
+    letterSpacing: 4,
+  },
+  cartaoClienteTitulo: {
+    color: colors.primaryForeground,
+    fontSize: 20,
+  },
+  cartaoClienteApoio: {
+    color: colors.primaryForeground,
+    opacity: 0.72,
+  },
+  codigoCartao: {
+    color: colors.primaryForeground,
+    fontSize: 30,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  qrLocal: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 6,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.85)",
+  },
+  acoesTopo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  badgeSininho: {
+    position: "absolute",
+    right: 1,
+    top: 1,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+  },
+  badgeSininhoTexto: {
+    color: colors.primaryForeground,
+    fontSize: 10,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  notificacao: {
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  notificacaoNova: {
+    borderColor: colors.primary,
+    backgroundColor: colors.accent,
   },
 });

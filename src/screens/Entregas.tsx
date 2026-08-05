@@ -199,12 +199,15 @@ function ItemDeEntrega({
 
       {entrega.observacao ? <Apoio>Observação: {entrega.observacao}</Apoio> : null}
 
-      {aguardando ? (
-        <View style={estilos.acoes}>
+      <View style={estilos.acoes}>
+        <Botao titulo="Detalhes" icone="information-circle-outline" variante="secundario" onPress={aoDetalhar} style={{ flex: 1 }} />
+        {aguardando ? (
+          <>
           <Botao titulo="Entregar" icone="checkmark" onPress={aoEntregar} style={{ flex: 1 }} />
           <Botao titulo="Cancelar" variante="perigo" onPress={aoCancelar} />
-        </View>
-      ) : null}
+          </>
+        ) : null}
+      </View>
     </Cartao>
   );
 }
@@ -311,7 +314,7 @@ function FolhaDeEntrega({ entrega, aoFechar }: { entrega: Entrega | null; aoFech
   return (
     <>
       <Folha
-        visivel={entrega !== null}
+        visivel={entrega !== null && !scannerAberto}
         titulo="Confirmar entrega"
         aoFechar={aoFechar}
         grande

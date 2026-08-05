@@ -143,6 +143,7 @@ export interface Regra {
   /** Centavos gastos por cupom. */
   valorPorCupom?: number;
   quantidadeGanhadores?: number;
+  limiteTotalCupons?: number;
   limiteDiarioCliente?: number;
 }
 
@@ -171,6 +172,7 @@ export interface Campanha {
   premio?: Premio;
   totalParticipantes: number;
   totalLancamentos: number;
+  totalBeneficios?: number;
   /** Centavos. */
   valorMovimentado: number;
   /** Frase pronta do servidor: "1 selo a cada R$ 20,00". */
@@ -275,6 +277,7 @@ export interface SorteioNaFicha {
   campanha: string;
   premio: string;
   situacao: SituacaoCampanha;
+  limiteTotalCupons?: number;
   cupons: number;
 }
 
@@ -390,6 +393,15 @@ export interface EntregaPendente {
   desde: string;
 }
 
+export interface PremioEntregue {
+  id: string;
+  codigo: string;
+  cliente: string;
+  premio: string;
+  entregueEm: string;
+  recebedor: string;
+}
+
 export interface SorteioPronto {
   id: string;
   campanha: string;
@@ -429,6 +441,7 @@ export interface ResumoInicio {
   campanhas: CampanhaResumo[];
   ultimasCompras: CompraRecente[];
   entregasPendentes: EntregaPendente[];
+  premiosEntregues: PremioEntregue[];
   sorteiosProntos: SorteioPronto[];
   proximosSorteios: ProximoSorteio[];
   quaseCompletando: QuaseLa[];
@@ -525,7 +538,9 @@ export interface SorteioDoCliente {
   campanhaId: string;
   campanha: string;
   premio: string;
+  situacao: SituacaoCampanha;
   cupons: number;
+  limiteTotalCupons?: number;
   sorteiaEm?: string;
   sorteado: boolean;
   ganhou: boolean;
@@ -541,6 +556,19 @@ export interface PremioDoCliente {
   desde: string;
 }
 
+export type TipoNotificacao = "NOVA_CAMPANHA" | "BENEFICIO_RECEBIDO";
+
+export interface NotificacaoDoCliente {
+  id: string;
+  tipo: TipoNotificacao;
+  titulo: string;
+  mensagem: string;
+  destinoTipo: string;
+  destinoId: string;
+  criadaEm: string;
+  lidaEm?: string | null;
+}
+
 export interface CartaoDoPortal {
   primeiroNome: string;
   empresa: string;
@@ -548,4 +576,6 @@ export interface CartaoDoPortal {
   cartoes: CartaoDoCliente[];
   sorteios: SorteioDoCliente[];
   premios: PremioDoCliente[];
+  notificacoes: NotificacaoDoCliente[];
+  notificacoesNaoLidas: number;
 }
