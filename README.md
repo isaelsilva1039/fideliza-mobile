@@ -33,3 +33,4 @@ O backend atual ainda identifica administrador e funcionário pelos cabeçalhos
 devem ser usados para distribuir o app. A API precisa emitir e validar tokens
 assinados (JWT ou sessão equivalente) antes de uma publicação em lojas.
 # fideliza-mobile
+# fideliza-mobile
