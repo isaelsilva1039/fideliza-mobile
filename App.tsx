@@ -1,10 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
+import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,13 +18,14 @@ import {
   View,
 } from "react-native";
 
-import { Avatar, Apoio, Cartao, Icone, Linha, Numero, Rotulo, Secao, Selo, Selos, Texto, Titulo } from "./src/components/ui/base";
+import { Avatar, Apoio, Cartao, Divisor, Icone, Linha, Numero, Rotulo, Secao, Selo, Selos, Texto, Titulo } from "./src/components/ui/base";
 import { Botao, BotaoIcone } from "./src/components/ui/Botao";
 import { Busca, Campo, CampoMoeda, Filtros, Interruptor, Seletor } from "./src/components/ui/formulario";
 import { pode, perfisAtribuiveis } from "./src/constants/permissoes";
 import {
   useAlterarSituacaoCampanha,
   useAuditoria,
+  useCampanha,
   useCampanhas,
   useCancelarEntrega,
   useClientes,
@@ -36,19 +39,22 @@ import {
   useEntregas,
   useEquipe,
   useInicio,
+  useParticipantes,
+  useFichaCliente,
   useRegistrarCompra,
   useSalvarConfiguracao,
   useSortear,
   useTodasEmpresas,
 } from "./src/hooks/use-queries";
 import { mensagemDoErro } from "./src/lib/api/errors";
-import { data, dataHora, desde, documento, moeda, paraIso, telefone } from "./src/lib/format";
+import { data, dataHora, desde, diaMes, documento, moeda, paraIso, plural, telefone, variacao } from "./src/lib/format";
 import { MENU, TITULOS, type NomeDeAba } from "./src/navigation/rotas";
 import * as servico from "./src/services";
 import {
   ROTULO_PERFIL,
   ROTULO_SITUACAO_CAMPANHA,
   ROTULO_SITUACAO_ENTREGA,
+  ROTULO_TRANSICAO,
   ROTULO_TIPO_CAMPANHA,
   type Campanha,
   type CartaoDoPortal,
@@ -57,6 +63,7 @@ import {
   type Entrega,
   type Empresa,
   type Membro,
+  type Participante,
   type Perfil,
   type SituacaoCampanha,
   type SituacaoEntrega,
@@ -65,6 +72,8 @@ import {
 import { avisar, useAvisos } from "./src/stores/avisos";
 import { useSession } from "./src/stores/session";
 import { borderWidth, colors, fontSize, fontWeight, radius, spacing, theme, toneColors, type Tone } from "./src/theme";
+
+const LOGO = require("./assets/logo.png");
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -90,6 +99,8 @@ function FidelizaApp() {
   const { session, hydrated, hydrate, setSession, clear, setEmpresaAtiva } = useSession();
   const [fluxoPublico, setFluxoPublico] = useState<FluxoPublico>("login");
   const [aba, setAba] = useState<NomeDeAba>("inicio");
+  const [campanhaAbertaId, setCampanhaAbertaId] = useState<string | null>(null);
+  const [clienteAbertoId, setClienteAbertoId] = useState<string | null>(null);
 
   useEffect(() => {
     void hydrate();
@@ -100,6 +111,11 @@ function FidelizaApp() {
     const primeiraAba = abasDoPerfil(session.usuario.perfil)[0]?.rota ?? "inicio";
     setAba((atual) => (abasDoPerfil(session.usuario.perfil).some((item) => item.rota === atual) ? atual : primeiraAba));
   }, [session]);
+
+  useEffect(() => {
+    setCampanhaAbertaId(null);
+    setClienteAbertoId(null);
+  }, [session?.empresaAtivaId]);
 
   if (!hydrated) return <CarregandoTela />;
 
@@ -124,6 +140,11 @@ function FidelizaApp() {
 
   const abas = abasDoPerfil(session.usuario.perfil);
   const empresaAtiva = session.empresas.find((empresa) => empresa.id === session.empresaAtivaId);
+  const trocarAba = (proxima: NomeDeAba) => {
+    setCampanhaAbertaId(null);
+    setClienteAbertoId(null);
+    setAba(proxima);
+  };
 
   return (
     <Shell
@@ -135,7 +156,7 @@ function FidelizaApp() {
       empresas={session.empresas}
       empresaAtivaId={session.empresaAtivaId}
       onTrocarEmpresa={(id) => void setEmpresaAtiva(id)}
-      onAba={setAba}
+      onAba={trocarAba}
       onSair={async () => {
         try {
           await servico.sair();
@@ -146,9 +167,23 @@ function FidelizaApp() {
         }
       }}
     >
-      {aba === "inicio" ? <Inicio perfil={session.usuario.perfil} onAba={setAba} /> : null}
-      {aba === "campanhas" ? <Campanhas podeGerenciar={pode(session.usuario, "campanhas.gerenciar")} podeSortear={pode(session.usuario, "campanhas.sortear")} /> : null}
-      {aba === "clientes" ? <Clientes podeGerenciar={pode(session.usuario, "clientes.gerenciar")} /> : null}
+      {aba === "inicio" ? <Inicio perfil={session.usuario.perfil} onAba={trocarAba} /> : null}
+      {aba === "campanhas" ? (
+        clienteAbertoId ? (
+          <ClienteDetalhe id={clienteAbertoId} onVoltar={() => setClienteAbertoId(null)} onAbrirCampanha={(id) => { setClienteAbertoId(null); setCampanhaAbertaId(id); setAba("campanhas"); }} />
+        ) : campanhaAbertaId ? (
+          <CampanhaDetalhe id={campanhaAbertaId} perfil={session.usuario.perfil} podeGerenciar={pode(session.usuario, "campanhas.gerenciar")} podeSortear={pode(session.usuario, "campanhas.sortear")} onVoltar={() => setCampanhaAbertaId(null)} onAbrirCliente={(id) => setClienteAbertoId(id)} />
+        ) : (
+          <Campanhas perfil={session.usuario.perfil} podeGerenciar={pode(session.usuario, "campanhas.gerenciar")} podeSortear={pode(session.usuario, "campanhas.sortear")} onAbrirCampanha={setCampanhaAbertaId} />
+        )
+      ) : null}
+      {aba === "clientes" ? (
+        clienteAbertoId ? (
+          <ClienteDetalhe id={clienteAbertoId} onVoltar={() => setClienteAbertoId(null)} onAbrirCampanha={(id) => { setClienteAbertoId(null); setCampanhaAbertaId(id); setAba("campanhas"); }} />
+        ) : (
+          <Clientes podeGerenciar={pode(session.usuario, "clientes.gerenciar")} onAbrirCliente={setClienteAbertoId} />
+        )
+      ) : null}
       {aba === "entregas" ? <Entregas /> : null}
       {aba === "lancamentos" ? <Lancamentos /> : null}
       {aba === "equipe" ? <Equipe perfil={session.usuario.perfil} /> : null}
@@ -326,6 +361,7 @@ function Shell({
 }) {
   const [menuAberto, setMenuAberto] = useState(false);
   const [perfilAberto, setPerfilAberto] = useState(false);
+  const [compraRapidaAberta, setCompraRapidaAberta] = useState(false);
   const principais = abas.slice(0, 4);
   const resto = abas.slice(4);
   const abaNoResto = resto.some((item) => item.rota === aba);
@@ -346,6 +382,9 @@ function Shell({
         </View>
       </View>
       <View style={estilos.miolo}>{children}</View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Registrar compra" style={estilos.fabCompra} onPress={() => setCompraRapidaAberta(true)}>
+        <Icone nome="cash-outline" tamanho={26} cor={colors.primaryForeground} />
+      </Pressable>
       <View style={estilos.navbar}>
         {principais.map((item) => (
           <ItemNavbar key={item.rota} titulo={item.titulo} icone={item.icone} ativo={aba === item.rota} onPress={() => onAba(item.rota)} />
@@ -380,6 +419,7 @@ function Shell({
         {pode({ perfil }, "configuracoes.gerenciar") ? <ConfiguracoesCard /> : null}
         <Botao titulo="Sair" icone="log-out-outline" variante="perigo" largura="cheia" onPress={onSair} />
       </Folha>
+      <FormularioCompraRapida visivel={compraRapidaAberta} onFechar={() => setCompraRapidaAberta(false)} />
     </SafeAreaView>
   );
 }
@@ -395,7 +435,7 @@ function ItemNavbar({ titulo, icone, ativo, onPress }: { titulo: string; icone: 
 }
 
 function Inicio({ perfil, onAba }: { perfil: Perfil; onAba: (aba: NomeDeAba) => void }) {
-  const [dias, setDias] = useState<"7" | "30" | "90">("30");
+  const [dias, setDias] = useState<"1" | "7" | "30">("7");
   const [compraRapidaAberta, setCompraRapidaAberta] = useState(false);
   const query = useInicio(Number(dias));
   const inicio = query.data;
@@ -403,88 +443,149 @@ function Inicio({ perfil, onAba }: { perfil: Perfil; onAba: (aba: NomeDeAba) => 
   return (
     <>
       <ScrollView contentContainerStyle={estilos.conteudoComNav}>
-        <Seletor rotulo="Período" valor={dias} onChange={setDias} opcoes={[{ valor: "7", rotulo: "7 dias" }, { valor: "30", rotulo: "30 dias" }, { valor: "90", rotulo: "90 dias" }]} />
-        <View style={estilos.cartaoPrincipal}>
-          <View style={{ flex: 1 }}>
-            <Rotulo style={{ color: colors.primaryForeground }}>Movimento</Rotulo>
-            <Text style={estilos.numeroPrincipal}>{inicio ? moeda(inicio.movimento.valor) : "..."}</Text>
-            <Apoio style={{ color: colors.primaryForeground }}>{inicio ? `${inicio.clientesQueCompraram.valor} clientes compraram no período` : "Carregando indicadores"}</Apoio>
-          </View>
-          <View style={estilos.iconePrincipal}>
-            <Icone nome="wallet-outline" tamanho={28} cor={colors.primaryForeground} />
-          </View>
-        </View>
+        <Seletor rotulo="Período" valor={dias} onChange={setDias} opcoes={[{ valor: "1", rotulo: "Hoje" }, { valor: "7", rotulo: "7 dias" }, { valor: "30", rotulo: "30 dias" }]} />
         <View style={estilos.atalhos}>
           <Atalho icone="cash-outline" titulo="Compra" onPress={() => setCompraRapidaAberta(true)} />
           <Atalho icone="megaphone-outline" titulo="Campanhas" onPress={() => onAba("campanhas")} />
           <Atalho icone="gift-outline" titulo="Entregas" onPress={() => onAba("entregas")} />
           {perfil === "FUNCIONARIO" ? <Atalho icone="people-outline" titulo="Clientes" onPress={() => onAba("clientes")} /> : <Atalho icone="clipboard-outline" titulo="Lançamentos" onPress={() => onAba("lancamentos")} />}
         </View>
-        <View style={estilos.gradeIndicadores}>
-          <Indicador titulo="Campanhas no ar" valor={String(inicio?.campanhasNoAr ?? "...")} icone="radio-outline" />
-          <Indicador titulo="Benefícios entregues" valor={String(inicio?.beneficiosEntregues.valor ?? "...")} icone="checkmark-done-outline" />
-        </View>
-        <Secao titulo="Próximas ações">
-          {query.isLoading ? <CarregandoBloco /> : query.isError ? <ErroBloco /> : (
-            <>
-              {inicio?.sorteiosProntos.slice(0, 2).map((item) => <LinhaAcao key={item.id} icone="trophy-outline" titulo={item.campanha} subtitulo={`${item.cupons} cupons • ${item.premio}`} tom="warning" onPress={() => onAba("campanhas")} />)}
-              {inicio?.entregasPendentes.slice(0, 3).map((item) => <LinhaAcao key={item.id} icone="gift-outline" titulo={item.premio} subtitulo={`${item.cliente} • ${desde(item.desde)}`} tom="brand" onPress={() => onAba("entregas")} />)}
-              {!inicio?.sorteiosProntos.length && !inicio?.entregasPendentes.length ? <Vazio texto="Nenhuma pendência agora." /> : null}
-            </>
-          )}
-        </Secao>
-        <Secao titulo="Últimas compras">
-          {inicio?.ultimasCompras.slice(0, 5).map((item) => (
-            <Cartao key={item.id}>
-              <Linha rotulo={item.cliente}><Texto>{moeda(item.valor)}</Texto></Linha>
-              <Apoio>{item.campanha} • {item.beneficio} • {desde(item.quando)}</Apoio>
-            </Cartao>
-          ))}
-        </Secao>
+        {query.isLoading ? <CarregandoBloco /> : query.isError ? <ErroBloco /> : inicio ? (
+          <>
+            <View style={estilos.gradeIndicadores}>
+              <Indicador titulo="Movimento" valor={moeda(inicio.movimento.valor)} icone="wallet-outline" detalhe={variacao(inicio.movimento.variacao) ?? "no período"} />
+              <Indicador titulo="Clientes que compraram" valor={String(inicio.clientesQueCompraram.valor)} icone="people-outline" detalhe={variacao(inicio.clientesQueCompraram.variacao) ?? "ativos"} />
+            </View>
+            <View style={estilos.gradeIndicadores}>
+              <Indicador titulo="Selos e cupons" valor={String(inicio.beneficiosEntregues.valor)} icone="ticket-outline" detalhe={variacao(inicio.beneficiosEntregues.variacao) ?? "entregues"} />
+              <Indicador titulo="Campanhas no ar" valor={String(inicio.campanhasNoAr)} icone="megaphone-outline" detalhe={inicio.clientesInativos > 0 ? `${inicio.clientesInativos} inativos` : "publicadas"} />
+            </View>
+
+            {inicio.sorteiosProntos.length > 0 ? (
+              <Secao titulo={inicio.sorteiosProntos.length === 1 ? "Sorteio pronto" : "Sorteios prontos"}>
+                {inicio.sorteiosProntos.map((item) => (
+                  <LinhaAcao key={item.id} icone="sparkles-outline" titulo={item.campanha} subtitulo={`${plural(item.participantes, "participante", "participantes")} • ${plural(item.cupons, "cupom", "cupons")} • encerrou ${desde(item.encerradaEm)}`} tom="warning" onPress={() => onAba("campanhas")} />
+                ))}
+              </Secao>
+            ) : null}
+
+            {inicio.quaseCompletando.length > 0 ? (
+              <Secao titulo="Quase completando o cartão">
+                {inicio.quaseCompletando.slice(0, 6).map((item) => (
+                  <Cartao key={`${item.clienteId}-${item.campanhaId}`}>
+                    <View style={estilos.linhaEntre}>
+                      <View style={{ flex: 1 }}>
+                        <Titulo nivel={3} numberOfLines={1}>{item.cliente}</Titulo>
+                        <Apoio numberOfLines={1}>{item.campanha} • {telefone(item.telefone)}</Apoio>
+                      </View>
+                      <Selo tom="info">{item.faltam === 1 ? "falta 1" : `faltam ${item.faltam}`}</Selo>
+                    </View>
+                    <Selos atuais={item.selosAtuais} necessarios={item.selosNecessarios} />
+                  </Cartao>
+                ))}
+              </Secao>
+            ) : null}
+
+            <Secao titulo="Prêmios para entregar">
+              {inicio.entregasPendentes.length ? inicio.entregasPendentes.slice(0, 4).map((item) => (
+                <LinhaAcao key={item.id} icone="gift-outline" titulo={item.cliente} subtitulo={`${item.premio} • ${item.codigo} • ${desde(item.desde)}`} tom="brand" onPress={() => onAba("entregas")} />
+              )) : <Vazio texto="Nada pendente. Todos os prêmios já foram entregues." />}
+            </Secao>
+
+            <Secao titulo="Movimento por dia">
+              <Cartao>
+                <GraficoMovimento pontos={inicio.movimentoPorDia} />
+              </Cartao>
+            </Secao>
+
+            <Secao titulo="Suas campanhas" acao={<Botao titulo="Ver todas" variante="sutil" compacto onPress={() => onAba("campanhas")} />}>
+              {inicio.campanhas.length ? inicio.campanhas.slice(0, 5).map((item) => (
+                <Pressable key={item.id} onPress={() => onAba("campanhas")} accessibilityRole="button" accessibilityLabel={item.nome}>
+                  <Cartao>
+                    <View style={estilos.linhaEntre}>
+                      <View style={{ flex: 1 }}>
+                        <Titulo nivel={3} numberOfLines={1}>{item.nome}</Titulo>
+                        <Apoio>{ROTULO_TIPO_CAMPANHA[item.tipo]} • {plural(item.participantes, "cliente", "clientes")}</Apoio>
+                      </View>
+                      <Selo tom={tomCampanha(item.situacao)}>{ROTULO_SITUACAO_CAMPANHA[item.situacao]}</Selo>
+                    </View>
+                    <Apoio numberOfLines={1}>Prêmio: {item.premio}</Apoio>
+                  </Cartao>
+                </Pressable>
+              )) : <Vazio texto="Nenhuma campanha publicada." />}
+            </Secao>
+
+            {inicio.proximosSorteios.length > 0 ? (
+              <Secao titulo="Sorteios marcados">
+                {inicio.proximosSorteios.map((item) => (
+                  <LinhaAcao key={item.id} icone="calendar-outline" titulo={item.campanha} subtitulo={`${item.premio} • ${data(item.sorteiaEm)} • ${plural(item.participantes, "participante", "participantes")}`} tom="brand" onPress={() => onAba("campanhas")} />
+                ))}
+              </Secao>
+            ) : null}
+
+            <Secao titulo="Últimas compras">
+              {inicio.ultimasCompras.length ? inicio.ultimasCompras.map((item) => (
+                <Cartao key={item.id}>
+                  <View style={estilos.linhaEntre}>
+                    <View style={{ flex: 1 }}>
+                      <Texto numberOfLines={1}>{item.cliente}</Texto>
+                      <Apoio numberOfLines={1}>{item.beneficio} • {desde(item.quando)}</Apoio>
+                    </View>
+                    <Texto style={{ fontWeight: fontWeight.semibold }}>{moeda(item.valor)}</Texto>
+                  </View>
+                </Cartao>
+              )) : <Vazio texto="Nenhuma compra registrada ainda." />}
+            </Secao>
+          </>
+        ) : null}
       </ScrollView>
       <FormularioCompraRapida visivel={compraRapidaAberta} onFechar={() => setCompraRapidaAberta(false)} />
     </>
   );
 }
 
-function Campanhas({ podeGerenciar, podeSortear }: { podeGerenciar: boolean; podeSortear: boolean }) {
+function Campanhas({ perfil, podeGerenciar, podeSortear, onAbrirCampanha }: { perfil: Perfil; podeGerenciar: boolean; podeSortear: boolean; onAbrirCampanha: (id: string) => void }) {
   const [busca, setBusca] = useState("");
   const [situacoes, setSituacoes] = useState<SituacaoCampanha[]>([]);
+  const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [formAberto, setFormAberto] = useState(false);
   const query = useCampanhas({ busca, situacao: situacoes, tamanho: 50 });
   const alterar = useAlterarSituacaoCampanha();
   const sortear = useSortear((sorteio) => Alert.alert("Sorteio realizado", sorteio.ganhadores.map((g) => `${g.posicao}. ${g.nome}`).join("\n") || "Sem ganhadores."));
+  const totalFiltros = (busca.trim() ? 1 : 0) + situacoes.length;
 
   return (
     <View style={estilos.telaLista}>
       <BarraLista titulo="Campanhas" acao={podeGerenciar ? <Botao titulo="Nova" icone="add" compacto onPress={() => setFormAberto(true)} /> : undefined} />
-      <Busca valor={busca} onChange={setBusca} placeholder="Buscar campanha" />
-      <Filtros<SituacaoCampanha> selecionados={situacoes} onChange={setSituacoes} opcoes={["ATIVA", "RASCUNHO", "PAUSADA", "ENCERRADA", "SORTEADA"].map((valor) => ({ valor: valor as SituacaoCampanha, rotulo: ROTULO_SITUACAO_CAMPANHA[valor as SituacaoCampanha] }))} />
+      <View style={estilos.filtroResumo}>
+        <Botao titulo={totalFiltros ? `Filtros (${totalFiltros})` : "Filtros"} icone={filtrosAbertos ? "chevron-up" : "options-outline"} variante={totalFiltros ? "primario" : "secundario"} compacto onPress={() => setFiltrosAbertos((aberto) => !aberto)} />
+        {totalFiltros ? <Botao titulo="Limpar" variante="sutil" compacto onPress={() => { setBusca(""); setSituacoes([]); }} /> : null}
+      </View>
+      {filtrosAbertos ? (
+        <Cartao style={estilos.painelFiltros}>
+          <Busca valor={busca} onChange={setBusca} placeholder="Buscar campanha" />
+          <Filtros<SituacaoCampanha> selecionados={situacoes} onChange={setSituacoes} opcoes={["ATIVA", "RASCUNHO", "PAUSADA", "ENCERRADA", "SORTEADA"].map((valor) => ({ valor: valor as SituacaoCampanha, rotulo: ROTULO_SITUACAO_CAMPANHA[valor as SituacaoCampanha] }))} />
+        </Cartao>
+      ) : totalFiltros ? (
+        <Apoio numberOfLines={1}>{resumoFiltrosCampanha(busca, situacoes)}</Apoio>
+      ) : null}
       <FlatList
         data={query.data?.content ?? []}
         keyExtractor={(item) => item.id}
         contentContainerStyle={estilos.listaComNav}
         ListEmptyComponent={query.isLoading ? <CarregandoBloco /> : query.isError ? <ErroBloco /> : <Vazio texto="Nenhuma campanha encontrada." />}
         renderItem={({ item }) => (
-          <Cartao destaque={item.podeSortear}>
-            <View style={estilos.linhaEntre}>
-              <View style={{ flex: 1 }}>
-                <Titulo nivel={3}>{item.nome}</Titulo>
-                <Apoio>{ROTULO_TIPO_CAMPANHA[item.tipo]} • {item.regraEmUmaFrase}</Apoio>
-              </View>
-              <Selo tom={tomCampanha(item.situacao)}>{ROTULO_SITUACAO_CAMPANHA[item.situacao]}</Selo>
-            </View>
-            <View style={estilos.gradeIndicadores}>
-              <MiniDado rotulo="Participantes" valor={String(item.totalParticipantes)} />
-              <MiniDado rotulo="Movimento" valor={moeda(item.valorMovimentado)} />
-            </View>
-            <View style={estilos.acoesLinha}>
-              {podeGerenciar ? item.proximasSituacoes.slice(0, 2).map((situacao) => (
-                <Botao key={situacao} titulo={ROTULO_SITUACAO_CAMPANHA[situacao]} variante="secundario" compacto carregando={alterar.isPending} onPress={() => alterar.mutate({ id: item.id, situacao })} />
-              )) : null}
-              {podeSortear && item.podeSortear ? <Botao titulo="Sortear" icone="trophy-outline" compacto carregando={sortear.isPending} onPress={() => sortear.mutate(item.id)} /> : null}
-            </View>
-          </Cartao>
+          <CampanhaCard
+            campanha={item}
+            perfil={perfil}
+            podeGerenciar={podeGerenciar}
+            podeSortear={podeSortear}
+            alterando={alterar.isPending}
+            sorteando={sortear.isPending}
+            onAbrir={() => onAbrirCampanha(item.id)}
+            onAlterar={(situacao) => confirmarAlteracaoCampanha(item, situacao, () => alterar.mutate({ id: item.id, situacao }))}
+            onSortear={() => confirmarSorteioCampanha(item, () => sortear.mutate(item.id))}
+          />
         )}
       />
       <FormularioCampanha visivel={formAberto} onFechar={() => setFormAberto(false)} />
@@ -492,7 +593,156 @@ function Campanhas({ podeGerenciar, podeSortear }: { podeGerenciar: boolean; pod
   );
 }
 
-function Clientes({ podeGerenciar }: { podeGerenciar: boolean }) {
+function CampanhaCard({
+  campanha,
+  perfil,
+  podeGerenciar,
+  podeSortear,
+  alterando,
+  sorteando,
+  onAbrir,
+  onAlterar,
+  onSortear,
+}: {
+  campanha: Campanha;
+  perfil: Perfil;
+  podeGerenciar: boolean;
+  podeSortear: boolean;
+  alterando: boolean;
+  sorteando: boolean;
+  onAbrir: () => void;
+  onAlterar: (situacao: SituacaoCampanha) => void;
+  onSortear: () => void;
+}) {
+  const progresso = progressoCampanha(campanha);
+  const icone = campanha.tipo === "CARTAO_FIDELIDADE" ? "ticket-outline" : "sparkles-outline";
+  const destaque = campanha.podeSortear || campanha.situacao === "ATIVA";
+  const transicoesPermitidas = campanha.proximasSituacoes
+    .slice(0, 2)
+    .filter((situacao) => usuarioPodeAlterarCampanha(perfil, podeGerenciar, campanha, situacao));
+  const podeExecutarSorteio = usuarioPodeSortearCampanha(perfil, podeSortear, campanha);
+
+  return (
+    <Pressable onPress={onAbrir} accessibilityRole="button" accessibilityLabel={`Abrir ${campanha.nome}`}>
+      <Cartao destaque={destaque} style={estilos.campanhaCard}>
+        <View style={estilos.campanhaTopo}>
+          <View style={estilos.campanhaIcone}>
+            <Icone nome={icone} tamanho={24} cor={colors.primaryForeground} />
+          </View>
+          <View style={{ flex: 1, gap: spacing.xs }}>
+            <View style={estilos.linhaEntre}>
+              <Selo tom={tomCampanha(campanha.situacao)}>{ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}</Selo>
+              <Selo tom="brand">{ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Selo>
+            </View>
+            <Titulo nivel={2} numberOfLines={2}>{campanha.nome}</Titulo>
+            <Apoio numberOfLines={2}>{campanha.regraEmUmaFrase}</Apoio>
+          </View>
+        </View>
+
+        <View style={estilos.campanhaFaixa}>
+          <View style={{ flex: 1 }}>
+            <Rotulo>Prêmio</Rotulo>
+            <Texto numberOfLines={1} style={{ fontWeight: fontWeight.semibold }}>{campanha.premio?.nome ?? "A definir"}</Texto>
+          </View>
+          {campanha.podeSortear ? <Selo tom="warning">Pronta para sortear</Selo> : null}
+        </View>
+
+        <View style={estilos.campanhaProgressoFundo}>
+          <View style={[estilos.campanhaProgressoBarra, { width: `${progresso}%` }]} />
+        </View>
+        <Apoio>{textoPeriodoCampanha(campanha)} • {progresso}% do período</Apoio>
+
+        <View style={estilos.gradeIndicadores}>
+          <MiniDado rotulo="Participantes" valor={String(campanha.totalParticipantes)} />
+          <MiniDado rotulo="Lançamentos" valor={String(campanha.totalLancamentos)} />
+          <MiniDado rotulo="Movimento" valor={moeda(campanha.valorMovimentado)} />
+        </View>
+
+        <View style={estilos.acoesLinha}>
+          {transicoesPermitidas.map((situacao) => (
+            <Botao key={situacao} titulo={rotuloAcaoCampanha(campanha, situacao)} variante={situacao === "ENCERRADA" ? "secundario" : "primario"} compacto carregando={alterando} onPress={() => onAlterar(situacao)} />
+          ))}
+          {podeExecutarSorteio ? <Botao titulo="Sortear" icone="trophy-outline" compacto carregando={sorteando} onPress={onSortear} /> : null}
+          <Botao titulo="Detalhes" icone="chevron-forward" variante="sutil" compacto onPress={onAbrir} />
+        </View>
+      </Cartao>
+    </Pressable>
+  );
+}
+
+function confirmarAlteracaoCampanha(campanha: Campanha, situacao: SituacaoCampanha, aoConfirmar: () => void) {
+  const rotulo = rotuloAcaoCampanha(campanha, situacao);
+  const acao = rotulo.toLowerCase();
+  const mensagem = situacao === "ATIVA"
+    ? "A campanha ficará disponível para lançamentos de compra."
+    : situacao === "ENCERRADA"
+      ? "A campanha será encerrada e deixará de receber novos lançamentos."
+      : situacao === "PAUSADA"
+        ? "A campanha ficará pausada e não receberá novos lançamentos enquanto estiver assim."
+        : "Essa alteração muda a disponibilidade da campanha.";
+
+  Alert.alert(
+    `${rotulo} campanha?`,
+    `Você confirma ${acao} "${campanha.nome}"?\n\n${mensagem}`,
+    [
+      { text: "Cancelar", style: "cancel" },
+      { text: rotulo, style: situacao === "ENCERRADA" ? "destructive" : "default", onPress: aoConfirmar },
+    ],
+  );
+}
+
+function rotuloAcaoCampanha(campanha: Campanha, situacao: SituacaoCampanha) {
+  if (situacao === "ATIVA" && campanha.situacao === "RASCUNHO") return "Disponibilizar";
+  return ROTULO_TRANSICAO[situacao];
+}
+
+function usuarioPodeAlterarCampanha(perfil: Perfil, permissaoGlobal: boolean, campanha: Campanha, situacao: SituacaoCampanha) {
+  if (permissaoGlobal) return true;
+  if (perfil !== "FUNCIONARIO") return false;
+  if (situacao === "ATIVA") return campanha.funcionarioPodePublicar;
+  if (situacao === "PAUSADA") return campanha.funcionarioPodePausar;
+  if (situacao === "ENCERRADA") return campanha.funcionarioPodeEncerrar;
+  return false;
+}
+
+function usuarioPodeSortearCampanha(perfil: Perfil, permissaoGlobal: boolean, campanha: Campanha) {
+  if (!campanha.podeSortear) return false;
+  if (permissaoGlobal) return true;
+  return perfil === "FUNCIONARIO" && campanha.funcionarioPodeSortear;
+}
+
+function confirmarSorteioCampanha(campanha: Campanha, aoConfirmar: () => void) {
+  Alert.alert(
+    "Realizar sorteio?",
+    `Você confirma o sorteio da campanha "${campanha.nome}"?\n\nDepois de sorteada, o resultado fica registrado para auditoria.`,
+    [
+      { text: "Cancelar", style: "cancel" },
+      { text: "Sortear", onPress: aoConfirmar },
+    ],
+  );
+}
+
+function progressoCampanha(campanha: Campanha) {
+  const inicio = new Date(campanha.iniciaEm).getTime();
+  const fim = new Date(campanha.terminaEm).getTime();
+  const agora = Date.now();
+  if (!Number.isFinite(inicio) || !Number.isFinite(fim) || fim <= inicio) return 0;
+  return Math.max(0, Math.min(100, Math.round(((agora - inicio) / (fim - inicio)) * 100)));
+}
+
+function textoPeriodoCampanha(campanha: Campanha) {
+  return `${data(campanha.iniciaEm)} até ${data(campanha.terminaEm)}`;
+}
+
+function resumoFiltrosCampanha(busca: string, situacoes: SituacaoCampanha[]) {
+  const partes = [
+    busca.trim() ? `Busca: ${busca.trim()}` : null,
+    situacoes.length ? `Situação: ${situacoes.map((s) => ROTULO_SITUACAO_CAMPANHA[s]).join(", ")}` : null,
+  ].filter(Boolean);
+  return partes.join(" • ");
+}
+
+function Clientes({ podeGerenciar, onAbrirCliente }: { podeGerenciar: boolean; onAbrirCliente: (id: string) => void }) {
   const [busca, setBusca] = useState("");
   const [formAberto, setFormAberto] = useState(false);
   const [compraCliente, setCompraCliente] = useState<Cliente | null>(null);
@@ -509,7 +759,7 @@ function Clientes({ podeGerenciar }: { podeGerenciar: boolean }) {
         ListEmptyComponent={query.isLoading ? <CarregandoBloco /> : query.isError ? <ErroBloco /> : <Vazio texto="Nenhum cliente encontrado." />}
         renderItem={({ item }) => (
           <Cartao>
-            <View style={estilos.linhaEntre}>
+            <Pressable style={estilos.linhaEntre} onPress={() => onAbrirCliente(item.id)} accessibilityRole="button" accessibilityLabel={`Abrir ficha de ${item.nome}`}>
               <View style={estilos.linhaComIcone}>
                 <Avatar nome={item.nome} />
                 <View style={{ flex: 1 }}>
@@ -518,10 +768,11 @@ function Clientes({ podeGerenciar }: { podeGerenciar: boolean }) {
                 </View>
               </View>
               <Selo tom={item.situacao === "ATIVO" ? "success" : "neutral"}>{item.situacao}</Selo>
-            </View>
+            </Pressable>
             <Linha rotulo="Cartão">{item.codigoCartao}</Linha>
             <Linha rotulo="Total gasto">{moeda(item.totalGasto)}</Linha>
             <View style={estilos.acoesLinha}>
+              <Botao titulo="Ver ficha" icone="person-outline" variante="secundario" compacto onPress={() => onAbrirCliente(item.id)} />
               <Botao titulo="Registrar compra" icone="cash-outline" compacto onPress={() => setCompraCliente(item)} />
             </View>
           </Cartao>
@@ -533,9 +784,241 @@ function Clientes({ podeGerenciar }: { podeGerenciar: boolean }) {
   );
 }
 
+function CampanhaDetalhe({
+  id,
+  perfil,
+  podeGerenciar,
+  podeSortear,
+  onVoltar,
+  onAbrirCliente,
+}: {
+  id: string;
+  perfil: Perfil;
+  podeGerenciar: boolean;
+  podeSortear: boolean;
+  onVoltar: () => void;
+  onAbrirCliente: (id: string) => void;
+}) {
+  const [busca, setBusca] = useState("");
+  const [quaseCompletando, setQuaseCompletando] = useState(false);
+  const detalhe = useCampanha(id);
+  const participantes = useParticipantes(id, { busca, quaseCompletando: quaseCompletando || undefined, tamanho: 80 });
+  const alterar = useAlterarSituacaoCampanha();
+  const sortear = useSortear((sorteio) => Alert.alert("Sorteio realizado", sorteio.ganhadores.map((g) => `${g.posicao}. ${g.nome}`).join("\n") || "Sem ganhadores."));
+
+  if (detalhe.isLoading) return <CarregandoBloco />;
+  if (detalhe.isError || !detalhe.data) return <ErroBloco />;
+
+  const campanha = detalhe.data.campanha;
+  const isCartao = campanha.tipo === "CARTAO_FIDELIDADE";
+  const transicoesPermitidas = campanha.proximasSituacoes
+    .slice(0, 2)
+    .filter((situacao) => usuarioPodeAlterarCampanha(perfil, podeGerenciar, campanha, situacao));
+  const podeExecutarSorteio = usuarioPodeSortearCampanha(perfil, podeSortear, campanha);
+
+  return (
+    <ScrollView contentContainerStyle={estilos.conteudoComNav}>
+      <TopoDetalhe titulo={campanha.nome} subtitulo={campanha.descricao} onVoltar={onVoltar} />
+      <View style={estilos.acoesLinha}>
+        {transicoesPermitidas.map((situacao) => (
+          <Botao key={situacao} titulo={rotuloAcaoCampanha(campanha, situacao)} variante={situacao === "ENCERRADA" ? "secundario" : "primario"} compacto carregando={alterar.isPending} onPress={() => confirmarAlteracaoCampanha(campanha, situacao, () => alterar.mutate({ id: campanha.id, situacao }))} />
+        ))}
+        {podeExecutarSorteio ? <Botao titulo="Sortear agora" icone="sparkles-outline" compacto carregando={sortear.isPending} onPress={() => confirmarSorteioCampanha(campanha, () => sortear.mutate(campanha.id))} /> : null}
+      </View>
+
+      <View style={estilos.linhaEntre}>
+        <Selo tom={tomCampanha(campanha.situacao)}>{ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}</Selo>
+        <Selo tom="brand">{ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Selo>
+      </View>
+
+      {detalhe.data.sorteio ? (
+        <Cartao destaque>
+          <Titulo nivel={3}>{detalhe.data.sorteio.ganhadores.length === 1 ? "Ganhador" : "Ganhadores"}</Titulo>
+          {detalhe.data.sorteio.ganhadores.map((ganhador) => (
+            <Pressable key={ganhador.clienteId} onPress={() => onAbrirCliente(ganhador.clienteId)} accessibilityRole="button" accessibilityLabel={`Abrir ${ganhador.nome}`}>
+              <Linha rotulo={`${ganhador.posicao}. ${ganhador.nome}`}>
+                <Texto>{ganhador.numeroCupom}</Texto>
+              </Linha>
+            </Pressable>
+          ))}
+          <Apoio>Sorteado em {dataHora(detalhe.data.sorteio.realizadoEm)} • hash {detalhe.data.sorteio.hashLista.slice(0, 12)}</Apoio>
+        </Cartao>
+      ) : null}
+
+      <View style={estilos.gradeIndicadores}>
+        <Indicador titulo="Clientes participando" valor={String(campanha.totalParticipantes)} icone="people-outline" />
+        <Indicador titulo={isCartao ? "Selos entregues" : "Cupons gerados"} valor={String(detalhe.data.totalBeneficios)} icone={isCartao ? "ticket-outline" : "albums-outline"} />
+      </View>
+      <View style={estilos.gradeIndicadores}>
+        <Indicador titulo="Movimento" valor={moeda(campanha.valorMovimentado)} icone="wallet-outline" />
+        <Indicador titulo="Prêmio" valor={campanha.premio?.nome ?? "A definir"} icone="gift-outline" />
+      </View>
+
+      <Secao titulo="Como funciona">
+        <Cartao>
+          <Texto>{campanha.regraEmUmaFrase}</Texto>
+          <Linha rotulo="Período">{`${data(campanha.iniciaEm)} a ${data(campanha.terminaEm)}`}</Linha>
+          {campanha.sorteiaEm ? <Linha rotulo="Sorteio">{data(campanha.sorteiaEm)}</Linha> : null}
+          {campanha.premio ? (
+            <>
+              <Divisor />
+              <Titulo nivel={3}>{campanha.premio.nome}</Titulo>
+              <Apoio>{campanha.premio.descricao}</Apoio>
+              <Linha rotulo="Disponíveis">{`${campanha.premio.quantidadeDisponivel} de ${campanha.premio.quantidadeTotal}`}</Linha>
+              {campanha.premio.instrucoesRetirada ? <Apoio>Retirada: {campanha.premio.instrucoesRetirada}</Apoio> : null}
+            </>
+          ) : null}
+        </Cartao>
+      </Secao>
+
+      <Secao titulo="Quem está participando" acao={isCartao ? <Botao titulo={quaseCompletando ? "Todos" : "Quase lá"} variante={quaseCompletando ? "primario" : "secundario"} compacto onPress={() => setQuaseCompletando((valor) => !valor)} /> : undefined}>
+        <Busca valor={busca} onChange={setBusca} placeholder="Buscar participante" />
+        {participantes.isLoading ? <CarregandoBloco /> : participantes.isError ? <ErroBloco /> : participantes.data?.content.length ? participantes.data.content.map((item) => (
+          <ParticipanteCard key={item.clienteId} participante={item} tipo={campanha.tipo} onPress={() => onAbrirCliente(item.clienteId)} />
+        )) : <Vazio texto="Nenhum participante encontrado." />}
+      </Secao>
+    </ScrollView>
+  );
+}
+
+function ParticipanteCard({ participante, tipo, onPress }: { participante: Participante; tipo: TipoCampanha; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Abrir ${participante.nome}`}>
+      <Cartao>
+        <View style={estilos.linhaEntre}>
+          <View style={{ flex: 1 }}>
+            <Titulo nivel={3} numberOfLines={1}>{participante.nome}</Titulo>
+            <Apoio>{documento(participante.documento)} • {telefone(participante.telefone)}</Apoio>
+          </View>
+          <Selo tom="brand">{participante.quantidade} {tipo === "CARTAO_FIDELIDADE" ? "selos" : "cupons"}</Selo>
+        </View>
+        <Linha rotulo="Total gasto">{moeda(participante.totalGasto)}</Linha>
+        <Apoio>Última participação: {desde(participante.ultimaParticipacao)}</Apoio>
+      </Cartao>
+    </Pressable>
+  );
+}
+
+function ClienteDetalhe({ id, onVoltar, onAbrirCampanha }: { id: string; onVoltar: () => void; onAbrirCampanha: (id: string) => void }) {
+  const ficha = useFichaCliente(id);
+  const [compraAberta, setCompraAberta] = useState(false);
+
+  if (ficha.isLoading) return <CarregandoBloco />;
+  if (ficha.isError || !ficha.data) return <ErroBloco />;
+
+  const cliente = ficha.data.cliente;
+  const premiosPendentes = ficha.data.premios.filter((item) => item.situacao === "AGUARDANDO");
+  const premiosRecebidos = ficha.data.premios.filter((item) => item.situacao !== "AGUARDANDO");
+
+  return (
+    <>
+      <ScrollView contentContainerStyle={estilos.conteudoComNav}>
+        <TopoDetalhe titulo={cliente.nome} subtitulo="Ficha do cliente" onVoltar={onVoltar} acao={<Botao titulo="Compra" icone="cash-outline" compacto onPress={() => setCompraAberta(true)} />} />
+        <Cartao>
+          <View style={estilos.linhaComIcone}>
+            <Avatar nome={cliente.nome} tamanho={52} />
+            <View style={{ flex: 1 }}>
+              <Titulo nivel={3}>{cliente.nome}</Titulo>
+              <Apoio>{documento(cliente.documento)} • {telefone(cliente.telefone)}</Apoio>
+              {cliente.email ? <Apoio>{cliente.email}</Apoio> : null}
+            </View>
+            <Selo tom={cliente.situacao === "ATIVO" ? "success" : "neutral"}>{cliente.situacao}</Selo>
+          </View>
+          <Divisor />
+          <Linha rotulo="Cartão">{cliente.codigoCartao}</Linha>
+          <Linha rotulo="Total gasto">{moeda(cliente.totalGasto)}</Linha>
+          <Linha rotulo="Cliente desde">{data(cliente.criadoEm)}</Linha>
+        </Cartao>
+
+        {premiosPendentes.length > 0 ? (
+          <Secao titulo={premiosPendentes.length === 1 ? "Prêmio para retirar" : "Prêmios para retirar"}>
+            {premiosPendentes.map((item) => (
+              <Cartao key={item.id} destaque>
+                <Linha rotulo={item.premio}><Texto>{item.codigo}</Texto></Linha>
+                <Apoio>{item.campanha} • solicitado {desde(item.solicitadoEm)}</Apoio>
+              </Cartao>
+            ))}
+          </Secao>
+        ) : null}
+
+        <Secao titulo="Cartões fidelidade">
+          {ficha.data.cartoes.length ? ficha.data.cartoes.map((item) => (
+            <Pressable key={`${item.empresa}-${item.campanhaId}`} onPress={() => onAbrirCampanha(item.campanhaId)} accessibilityRole="button" accessibilityLabel={`Abrir ${item.campanha}`}>
+              <Cartao>
+                <Titulo nivel={3}>{item.campanha}</Titulo>
+                <Apoio>{item.empresa} • {item.premio}</Apoio>
+                <Selos atuais={item.selosAtuais} necessarios={item.selosNecessarios} />
+                {item.vezesCompletado > 0 ? <Apoio>Já completou {item.vezesCompletado} {item.vezesCompletado === 1 ? "vez" : "vezes"}.</Apoio> : null}
+              </Cartao>
+            </Pressable>
+          )) : <Vazio texto="Nenhum cartão fidelidade ativo para este cliente." />}
+        </Secao>
+
+        <Secao titulo="Sorteios">
+          {ficha.data.sorteios.length ? ficha.data.sorteios.map((item) => (
+            <Pressable key={`${item.empresa}-${item.campanhaId}`} onPress={() => onAbrirCampanha(item.campanhaId)} accessibilityRole="button" accessibilityLabel={`Abrir ${item.campanha}`}>
+              <Cartao>
+                <View style={estilos.linhaEntre}>
+                  <View style={{ flex: 1 }}>
+                    <Titulo nivel={3}>{item.campanha}</Titulo>
+                    <Apoio>{item.empresa} • {item.premio}</Apoio>
+                  </View>
+                  <Selo tom={tomCampanha(item.situacao)}>{ROTULO_SITUACAO_CAMPANHA[item.situacao]}</Selo>
+                </View>
+                <Linha rotulo="Cupons">{item.cupons}</Linha>
+              </Cartao>
+            </Pressable>
+          )) : <Vazio texto="Este cliente ainda não participa de sorteios." />}
+        </Secao>
+
+        <Secao titulo="Últimas compras">
+          {ficha.data.compras.length ? ficha.data.compras.slice(0, 10).map((item) => (
+            <Cartao key={item.lancamento.id}>
+              <View style={estilos.linhaEntre}>
+                <View style={{ flex: 1 }}>
+                  <Texto>{item.campanha}</Texto>
+                  <Apoio>{dataHora(item.lancamento.criadoEm)} • {item.lancamento.quantidadeBeneficio} {item.lancamento.tipoBeneficio === "SELOS" ? "selos" : "cupons"}</Apoio>
+                </View>
+                <Texto style={{ fontWeight: fontWeight.semibold }}>{moeda(item.lancamento.valorCompra)}</Texto>
+              </View>
+              {item.lancamento.situacao === "CANCELADO" ? <Selo tom="danger">Cancelado</Selo> : null}
+            </Cartao>
+          )) : <Vazio texto="Nenhuma compra registrada para este cliente." />}
+        </Secao>
+
+        {premiosRecebidos.length > 0 ? (
+          <Secao titulo="Prêmios recebidos">
+            {premiosRecebidos.map((item) => (
+              <Cartao key={item.id}>
+                <Linha rotulo={item.premio}><Selo tom={tomEntrega(item.situacao)}>{ROTULO_SITUACAO_ENTREGA[item.situacao]}</Selo></Linha>
+                <Apoio>{item.campanha} • {item.entregueEm ? data(item.entregueEm) : data(item.solicitadoEm)}</Apoio>
+              </Cartao>
+            ))}
+          </Secao>
+        ) : null}
+      </ScrollView>
+      <FormularioCompra cliente={compraAberta ? cliente : null} onFechar={() => setCompraAberta(false)} />
+    </>
+  );
+}
+
+function TopoDetalhe({ titulo, subtitulo, onVoltar, acao }: { titulo: string; subtitulo?: string; onVoltar: () => void; acao?: ReactNode }) {
+  return (
+    <View style={estilos.topoDetalhe}>
+      <BotaoIcone icone="arrow-back" rotulo="Voltar" onPress={onVoltar} />
+      <View style={{ flex: 1 }}>
+        <Titulo nivel={2}>{titulo}</Titulo>
+        {subtitulo ? <Apoio>{subtitulo}</Apoio> : null}
+      </View>
+      {acao}
+    </View>
+  );
+}
+
 function Entregas() {
   const [busca, setBusca] = useState("");
   const [situacoes, setSituacoes] = useState<SituacaoEntrega[]>(["AGUARDANDO"]);
+  const [detalheSelecionada, setDetalheSelecionada] = useState<Entrega | null>(null);
   const [entregaSelecionada, setEntregaSelecionada] = useState<Entrega | null>(null);
   const [cancelarSelecionada, setCancelarSelecionada] = useState<Entrega | null>(null);
   const query = useEntregas({ busca, situacao: situacoes, tamanho: 80 });
@@ -554,10 +1037,14 @@ function Entregas() {
           <Cartao destaque={item.situacao === "AGUARDANDO"}>
             <View style={estilos.linhaEntre}>
               <View style={{ flex: 1 }}>
-                <Titulo nivel={3}>{item.premio}</Titulo>
+                <Pressable onPress={() => setDetalheSelecionada(item)} accessibilityRole="button" accessibilityLabel={`Ver detalhes de ${item.premio}`}>
+                  <Titulo nivel={3}>{item.premio}</Titulo>
+                </Pressable>
                 <Apoio>{item.cliente} • {telefone(item.telefoneCliente)}</Apoio>
               </View>
-              <Selo tom={tomEntrega(item.situacao)}>{ROTULO_SITUACAO_ENTREGA[item.situacao]}</Selo>
+              <Pressable onPress={() => setDetalheSelecionada(item)} accessibilityRole="button" accessibilityLabel="Ver detalhes da entrega">
+                <Selo tom={tomEntrega(item.situacao)}>{ROTULO_SITUACAO_ENTREGA[item.situacao]}</Selo>
+              </Pressable>
             </View>
             <Linha rotulo="Código">{item.codigo}</Linha>
             <Linha rotulo="Campanha">{item.campanha}</Linha>
@@ -571,9 +1058,62 @@ function Entregas() {
           </Cartao>
         )}
       />
+      <DetalheDaEntrega entrega={detalheSelecionada} onFechar={() => setDetalheSelecionada(null)} />
       <FormularioEntrega entrega={entregaSelecionada} onFechar={() => setEntregaSelecionada(null)} />
       <FormularioCancelarEntrega entrega={cancelarSelecionada} onFechar={() => setCancelarSelecionada(null)} />
     </View>
+  );
+}
+
+function DetalheDaEntrega({ entrega, onFechar }: { entrega: Entrega | null; onFechar: () => void }) {
+  return (
+    <Folha visivel={Boolean(entrega)} titulo="Detalhes da entrega" onFechar={onFechar} grande>
+      {entrega ? (
+        <>
+          <Cartao style={{ gap: spacing.sm }}>
+            <Titulo nivel={3}>{entrega.premio}</Titulo>
+            <Apoio>{entrega.campanha}</Apoio>
+            <Divisor />
+            <Linha rotulo="Status"><Selo tom={tomEntrega(entrega.situacao)}>{ROTULO_SITUACAO_ENTREGA[entrega.situacao]}</Selo></Linha>
+            <Linha rotulo="Cliente">{entrega.cliente}</Linha>
+            <Linha rotulo="Telefone">{telefone(entrega.telefoneCliente)}</Linha>
+            <Linha rotulo="Código">{entrega.codigo}</Linha>
+            <Linha rotulo="Solicitado">{data(entrega.solicitadoEm)}</Linha>
+            {entrega.entregueEm ? <Linha rotulo="Entregue">{data(entrega.entregueEm)}</Linha> : null}
+          </Cartao>
+
+          {entrega.situacao === "ENTREGUE" ? (
+            <Cartao style={{ gap: spacing.sm }}>
+              <Titulo nivel={3}>Registro da baixa</Titulo>
+              <Linha rotulo="Conferido por">{entrega.documentoConferido || "Não informado"}</Linha>
+              <Linha rotulo="Terceiro">{entrega.entregueParaTerceiro ? "Sim" : "Não"}</Linha>
+              {entrega.entregueParaTerceiro ? (
+                <>
+                  <Linha rotulo="Quem retirou">{entrega.recebedorNome || "Não informado"}</Linha>
+                  <Linha rotulo="Documento">{entrega.recebedorDocumento || "Não informado"}</Linha>
+                </>
+              ) : null}
+            </Cartao>
+          ) : null}
+
+          {entrega.instrucoesRetirada ? (
+            <Cartao style={{ gap: spacing.xs }}>
+              <Rotulo>Como retirar</Rotulo>
+              <Texto>{entrega.instrucoesRetirada}</Texto>
+            </Cartao>
+          ) : null}
+
+          {entrega.observacao ? (
+            <Cartao style={{ gap: spacing.xs }}>
+              <Rotulo>Observação</Rotulo>
+              <Texto>{entrega.observacao}</Texto>
+            </Cartao>
+          ) : null}
+
+          <Botao titulo="Fechar" variante="secundario" largura="cheia" onPress={onFechar} />
+        </>
+      ) : null}
+    </Folha>
   );
 }
 
@@ -701,17 +1241,15 @@ function FormularioCliente({ visivel, onFechar }: { visivel: boolean; onFechar: 
   const [nome, setNome] = useState("");
   const [doc, setDoc] = useState("");
   const [fone, setFone] = useState("");
-  const [email, setEmail] = useState("");
   const criar = useCriarCliente(() => {
-    setNome(""); setDoc(""); setFone(""); setEmail(""); onFechar();
+    setNome(""); setDoc(""); setFone(""); onFechar();
   });
   return (
     <Folha visivel={visivel} titulo="Novo cliente" onFechar={onFechar}>
       <Campo rotulo="Nome" valor={nome} onChange={setNome} />
-      <Campo rotulo="CPF ou CNPJ" valor={doc} onChange={setDoc} teclado="numeric" />
+      <Campo rotulo="CPF" valor={doc} onChange={setDoc} teclado="numeric" />
       <Campo rotulo="Telefone" valor={fone} onChange={setFone} teclado="phone-pad" />
-      <Campo rotulo="E-mail" valor={email} onChange={setEmail} teclado="email-address" autoCapitalize="none" />
-      <Botao titulo="Cadastrar" largura="cheia" carregando={criar.isPending} onPress={() => criar.mutate({ nome, documento: doc, telefone: fone, email: email || undefined })} />
+      <Botao titulo="Cadastrar" largura="cheia" carregando={criar.isPending} onPress={() => criar.mutate({ nome, documento: doc, telefone: fone })} />
     </Folha>
   );
 }
@@ -719,29 +1257,27 @@ function FormularioCliente({ visivel, onFechar }: { visivel: boolean; onFechar: 
 function FormularioCompra({ cliente, onFechar }: { cliente: Cliente | null; onFechar: () => void }) {
   const [campanhaId, setCampanhaId] = useState("");
   const [valor, setValor] = useState<number | null>(null);
-  const campanhas = useCampanhas({ tamanho: 50 });
+  const campanhas = useCampanhas({ situacao: ["ATIVA"], tamanho: 50 });
   const registrar = useRegistrarCompra(() => {
     setValor(null);
     setCampanhaId("");
     onFechar();
   });
-  const campanhaSelecionada = campanhas.data?.content.find((item) => item.id === campanhaId);
   const opcoes = useMemo(() => (campanhas.data?.content ?? []).map((item) => ({
     valor: item.id,
     rotulo: item.nome,
-    dica: `${ROTULO_SITUACAO_CAMPANHA[item.situacao]} • ${item.regraEmUmaFrase}`,
+    dica: item.regraEmUmaFrase,
   })), [campanhas.data]);
   return (
     <Folha visivel={Boolean(cliente)} titulo={cliente ? `Compra de ${cliente.nome}` : "Registrar compra"} onFechar={onFechar}>
       {campanhas.isLoading ? <CarregandoBloco /> : campanhas.isError ? <ErroBloco /> : opcoes.length ? (
         <Seletor rotulo="Campanha" valor={campanhaId || null} onChange={setCampanhaId} opcoes={opcoes} coluna />
       ) : (
-        <Vazio texto="Nenhuma campanha cadastrada. Crie e publique uma campanha antes de lançar compra." />
+        <Vazio texto="Nenhuma campanha no ar. Publique uma campanha antes de lançar compra." />
       )}
       <CampoMoeda rotulo="Valor da compra" centavos={valor} onChange={setValor} />
       <Botao titulo="Registrar compra" icone="cash-outline" largura="cheia" carregando={registrar.isPending} onPress={() => {
         if (!cliente || !campanhaId || !valor) return avisar.erro("Selecione campanha e informe um valor.");
-        if (campanhaSelecionada?.situacao !== "ATIVA") return avisar.erro("A campanha precisa estar No ar para receber lançamento.");
         registrar.mutate({ clienteId: cliente.id, campanhaId, valorCompra: valor });
       }} />
     </Folha>
@@ -753,8 +1289,10 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
   const [clienteId, setClienteId] = useState("");
   const [campanhaId, setCampanhaId] = useState("");
   const [valor, setValor] = useState<number | null>(null);
+  const [scannerAberto, setScannerAberto] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
   const clientes = useClientes({ busca: buscaCliente, tamanho: 12 });
-  const campanhas = useCampanhas({ tamanho: 50 });
+  const campanhas = useCampanhas({ situacao: ["ATIVA"], tamanho: 50 });
   const registrar = useRegistrarCompra(() => {
     setBuscaCliente("");
     setClienteId("");
@@ -774,15 +1312,31 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
     () => (campanhas.data?.content ?? []).map((item) => ({
       valor: item.id,
       rotulo: item.nome,
-      dica: `${ROTULO_SITUACAO_CAMPANHA[item.situacao]} • ${item.regraEmUmaFrase}`,
+      dica: item.regraEmUmaFrase,
     })),
     [campanhas.data],
   );
-  const campanhaSelecionada = campanhas.data?.content.find((item) => item.id === campanhaId);
 
   return (
-    <Folha visivel={visivel} titulo="Registrar compra" onFechar={onFechar}>
-      <Busca valor={buscaCliente} onChange={setBuscaCliente} placeholder="Buscar cliente" />
+    <>
+      <Folha visivel={visivel} titulo="Registrar compra" onFechar={onFechar}>
+      <View style={estilos.linhaEntre}>
+        <View style={{ flex: 1 }}>
+          <Rotulo>Cliente</Rotulo>
+          <Apoio>Leia o QR ou digite CPF, cartão, nome ou telefone.</Apoio>
+        </View>
+        <Botao titulo="Ler QR" icone="qr-code-outline" variante="secundario" compacto onPress={async () => {
+          if (!permission?.granted) {
+            const resposta = await requestPermission();
+            if (!resposta.granted) {
+              avisar.erro("Permita o uso da câmera para ler o QR Code.");
+              return;
+            }
+          }
+          setScannerAberto(true);
+        }} />
+      </View>
+      <Busca valor={buscaCliente} onChange={setBuscaCliente} placeholder="CPF, cartão, nome ou telefone" />
       {clientes.isLoading ? <CarregandoBloco /> : clientes.isError ? <ErroBloco /> : opcoesClientes.length ? (
         <Seletor rotulo="Cliente" valor={clienteId || null} onChange={setClienteId} opcoes={opcoesClientes} coluna />
       ) : (
@@ -791,71 +1345,448 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
       {campanhas.isLoading ? <CarregandoBloco /> : campanhas.isError ? <ErroBloco /> : opcoesCampanhas.length ? (
         <Seletor rotulo="Campanha" valor={campanhaId || null} onChange={setCampanhaId} opcoes={opcoesCampanhas} coluna />
       ) : (
-        <Vazio texto="Nenhuma campanha cadastrada. Crie e publique uma campanha antes de lançar compra." />
+        <Vazio texto="Nenhuma campanha no ar. Publique uma campanha antes de lançar compra." />
       )}
       <CampoMoeda rotulo="Valor da compra" centavos={valor} onChange={setValor} />
       <Botao titulo="Registrar compra" icone="cash-outline" largura="cheia" carregando={registrar.isPending} onPress={() => {
         if (!clienteId || !campanhaId || !valor) return avisar.erro("Selecione cliente, campanha e valor.");
-        if (campanhaSelecionada?.situacao !== "ATIVA") return avisar.erro("A campanha precisa estar No ar para receber lançamento.");
         registrar.mutate({ clienteId, campanhaId, valorCompra: valor });
       }} />
+      </Folha>
+      <ScannerQrCliente
+        visivel={scannerAberto}
+        onFechar={() => setScannerAberto(false)}
+        onLer={(valor) => {
+          const busca = textoBuscaDoQr(valor);
+          setBuscaCliente(busca);
+          setClienteId("");
+          setScannerAberto(false);
+          avisar.informacao("QR lido. Confira o cliente encontrado.");
+        }}
+      />
+    </>
+  );
+}
+
+function ScannerQrCliente({ visivel, onFechar, onLer }: { visivel: boolean; onFechar: () => void; onLer: (valor: string) => void }) {
+  const [bloqueado, setBloqueado] = useState(false);
+
+  useEffect(() => {
+    if (visivel) setBloqueado(false);
+  }, [visivel]);
+
+  const aoLer = (resultado: BarcodeScanningResult) => {
+    if (bloqueado || !resultado.data) return;
+    setBloqueado(true);
+    onLer(resultado.data);
+  };
+
+  return (
+    <Modal visible={visivel} animationType="slide" onRequestClose={onFechar}>
+      <SafeAreaView style={estilos.safe}>
+        <View style={estilos.scannerHeader}>
+          <View style={{ flex: 1 }}>
+            <Titulo nivel={2}>Ler QR do cliente</Titulo>
+            <Apoio>Aponte para o QR do cartão Fideliza+.</Apoio>
+          </View>
+          <BotaoIcone icone="close" rotulo="Fechar" onPress={onFechar} />
+        </View>
+        <CameraView
+          style={estilos.camera}
+          facing="back"
+          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          onBarcodeScanned={bloqueado ? undefined : aoLer}
+        >
+          <View style={estilos.miraQr}>
+            <View style={estilos.miraCaixa} />
+          </View>
+        </CameraView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function textoBuscaDoQr(valor: string) {
+  const bruto = valor.trim();
+  if (!bruto) return "";
+
+  try {
+    const url = new URL(bruto);
+    const chaves = ["codigoCartao", "cartao", "codigo", "cpf", "cnpj", "documento", "cliente"];
+    for (const chave of chaves) {
+      const lido = url.searchParams.get(chave);
+      if (lido) return lido.trim();
+    }
+    const ultimoSegmento = url.pathname.split("/").filter(Boolean).at(-1);
+    if (ultimoSegmento) return decodeURIComponent(ultimoSegmento);
+  } catch {
+    // QR simples: usa o próprio conteúdo.
+  }
+
+  return bruto;
+}
+
+function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar: () => void }) {
+  const session = useSession((estado) => estado.session);
+  const empresaAtiva = session?.empresas.find((empresa) => empresa.id === session.empresaAtivaId);
+  const nomeEmpresa = empresaAtiva?.nomeFantasia ?? "";
+  const [abaCampanha, setAbaCampanha] = useState<"geral" | "configuracoes">("geral");
+  const [descricao, setDescricao] = useState("");
+  const [tipo, setTipo] = useState<TipoCampanha>("CARTAO_FIDELIDADE");
+  const [inicio, setInicio] = useState(dataInput(0));
+  const [fim, setFim] = useState(dataInput(90));
+  const [sorteio, setSorteio] = useState(dataInput(93));
+  const [selosNecessarios, setSelosNecessarios] = useState("10");
+  const [valorPorCupom, setValorPorCupom] = useState<number | null>(2000);
+  const [quantidadeGanhadores, setQuantidadeGanhadores] = useState("1");
+  const [valorMinimoCompra, setValorMinimoCompra] = useState<number | null>(null);
+  const [limiteDiarioCliente, setLimiteDiarioCliente] = useState("1");
+  const [premio, setPremio] = useState("");
+  const [descricaoPremio, setDescricaoPremio] = useState("");
+  const [quantidadePremio, setQuantidadePremio] = useState("1");
+  const [instrucoesRetirada, setInstrucoesRetirada] = useState("");
+  const [funcionarioPodePublicar, setFuncionarioPodePublicar] = useState(false);
+  const [funcionarioPodePausar, setFuncionarioPodePausar] = useState(false);
+  const [funcionarioPodeEncerrar, setFuncionarioPodeEncerrar] = useState(false);
+  const [funcionarioPodeSortear, setFuncionarioPodeSortear] = useState(false);
+  const criar = useCriarCampanha(() => {
+    limparFormularioCampanha();
+    onFechar();
+  });
+  const isCartao = tipo === "CARTAO_FIDELIDADE";
+
+  function limparFormularioCampanha() {
+    setAbaCampanha("geral");
+    setDescricao("");
+    setTipo("CARTAO_FIDELIDADE");
+    setInicio(dataInput(0));
+    setFim(dataInput(90));
+    setSorteio(dataInput(93));
+    setSelosNecessarios("10");
+    setValorPorCupom(2000);
+    setQuantidadeGanhadores("1");
+    setValorMinimoCompra(null);
+    setLimiteDiarioCliente("1");
+    setPremio("");
+    setDescricaoPremio("");
+    setQuantidadePremio("1");
+    setInstrucoesRetirada("");
+    setFuncionarioPodePublicar(false);
+    setFuncionarioPodePausar(false);
+    setFuncionarioPodeEncerrar(false);
+    setFuncionarioPodeSortear(false);
+  }
+
+  function escolherTipo(proximo: TipoCampanha) {
+    setTipo(proximo);
+    if (proximo === "CARTAO_FIDELIDADE") {
+      setSelosNecessarios("10");
+      setLimiteDiarioCliente("1");
+      return;
+    }
+    setValorPorCupom(2000);
+    setQuantidadeGanhadores("1");
+    setLimiteDiarioCliente("20");
+    setSorteio(dataInput(93));
+  }
+
+  function salvar(publicar: boolean) {
+    const nome = nomeEmpresa.trim();
+    const textoDescricao = descricao.trim();
+    const nomePremio = premio.trim();
+    const qtdPremio = inteiroCampo(quantidadePremio);
+    const limiteDia = inteiroCampo(limiteDiarioCliente);
+    const dataInicio = dataFormulario(inicio, "inicio");
+    const dataFim = dataFormulario(fim, "fim");
+    const dataSorteio = isCartao ? null : dataFormulario(sorteio, "sorteio");
+
+    if (!nome) return avisar.erro("Selecione uma empresa ativa antes de criar campanha.");
+    if (nome.length < 3) return avisar.erro("O nome da empresa está curto demais para virar nome da campanha.");
+    if (!textoDescricao) return avisar.erro("Explique a campanha em uma frase.");
+    if (textoDescricao.length > 160) return avisar.erro("Use no máximo 160 caracteres na frase da campanha.");
+    if (!dataInicio || !dataFim) return avisar.erro("Informe início e término no formato AAAA-MM-DD.");
+    if (dataFim.getTime() < dataInicio.getTime()) return avisar.erro("O término não pode ser antes do início.");
+    if (!nomePremio) return avisar.erro("Diga o que o cliente ganha.");
+    if (!qtdPremio || qtdPremio < 1 || qtdPremio > 9999) return avisar.erro("Informe quantos prêmios existem.");
+    if (!limiteDia || limiteDia < 1 || limiteDia > 100) return avisar.erro("O limite diário deve ficar entre 1 e 100.");
+
+    if (isCartao) {
+      const selos = inteiroCampo(selosNecessarios);
+      if (!selos || selos < 2 || selos > 30) return avisar.erro("Diga quantos selos completam o cartão, entre 2 e 30.");
+      criar.mutate({
+        nome,
+        descricao: textoDescricao,
+        tipo,
+        iniciaEm: isoDaData(dataInicio, "inicio"),
+        terminaEm: isoDaData(dataFim, "fim"),
+        valorMinimoCompra: valorMinimoCompra || undefined,
+        selosNecessarios: selos,
+        limiteDiarioCliente: limiteDia,
+        nomePremio,
+        descricaoPremio: descricaoPremio.trim() || undefined,
+        quantidadePremio: qtdPremio,
+        instrucoesRetirada: instrucoesRetirada.trim() || undefined,
+        funcionarioPodePublicar,
+        funcionarioPodePausar,
+        funcionarioPodeEncerrar,
+        funcionarioPodeSortear: false,
+        publicar,
+      });
+      return;
+    }
+
+    const ganhadores = inteiroCampo(quantidadeGanhadores);
+    if (!valorPorCupom || valorPorCupom <= 0) return avisar.erro("Diga de quanto em quanto o cliente ganha um cupom.");
+    if (!ganhadores || ganhadores < 1 || ganhadores > 50) return avisar.erro("Informe quantos ganhadores o sorteio terá.");
+    if (!dataSorteio) return avisar.erro("Informe a data do sorteio no formato AAAA-MM-DD.");
+    if (dataSorteio.getTime() < dataFim.getTime()) return avisar.erro("O sorteio precisa ser depois do término da campanha.");
+
+    criar.mutate({
+      nome,
+      descricao: textoDescricao,
+      tipo,
+      iniciaEm: isoDaData(dataInicio, "inicio"),
+      terminaEm: isoDaData(dataFim, "fim"),
+      sorteiaEm: isoDaData(dataSorteio, "sorteio"),
+      valorMinimoCompra: valorMinimoCompra || undefined,
+      valorPorCupom,
+      quantidadeGanhadores: ganhadores,
+      limiteDiarioCliente: limiteDia,
+      nomePremio,
+      descricaoPremio: descricaoPremio.trim() || undefined,
+      quantidadePremio: qtdPremio,
+      instrucoesRetirada: instrucoesRetirada.trim() || undefined,
+      funcionarioPodePublicar,
+      funcionarioPodePausar,
+      funcionarioPodeEncerrar,
+      funcionarioPodeSortear,
+      publicar,
+    });
+  }
+
+  return (
+    <Folha visivel={visivel} titulo="Nova campanha" onFechar={onFechar}>
+      <Seletor<"geral" | "configuracoes">
+        rotulo="Aba"
+        valor={abaCampanha}
+        onChange={setAbaCampanha}
+        opcoes={[
+          { valor: "geral", rotulo: "Geral" },
+          { valor: "configuracoes", rotulo: "Configurações" },
+        ]}
+      />
+
+      {abaCampanha === "geral" ? (
+        <>
+          <Secao titulo="Tipo">
+            <Seletor<TipoCampanha>
+              valor={tipo}
+              onChange={escolherTipo}
+              coluna
+              opcoes={[
+                { valor: "CARTAO_FIDELIDADE", rotulo: "Cartão fidelidade", dica: "Cada compra dá selo. Ao completar o cartão, o cliente ganha o prêmio." },
+                { valor: "SORTEIO", rotulo: "Sorteio", dica: "Cada valor gasto vira cupom. No fim da campanha, você sorteia o prêmio." },
+              ]}
+            />
+          </Secao>
+
+          <Secao titulo="Informações gerais">
+            <Campo rotulo="Nome da campanha" valor={nomeEmpresa} onChange={() => undefined} editavel={false} dica="É o nome da empresa ativa. Para mudar, edite a empresa." />
+            <Campo rotulo="Explique em uma frase" valor={descricao} onChange={setDescricao} multilinha maxLength={160} placeholder={isCartao ? "Compre 10 açaís e ganhe 1 grátis." : "A cada R$ 20,00, você ganha um cupom para concorrer."} dica="É o que o funcionário fala para o cliente." />
+          </Secao>
+
+          <Secao titulo="O que o cliente ganha">
+            <Campo rotulo="Prêmio" valor={premio} onChange={setPremio} placeholder={isCartao ? "Açaí de 500 ml grátis" : "Honda Pop 110i 0 km"} maxLength={80} />
+            <Campo rotulo="Descrição do prêmio" valor={descricaoPremio} onChange={setDescricaoPremio} multilinha maxLength={300} placeholder="Detalhes do prêmio, quando precisar." />
+            <Campo rotulo="Quantos você tem?" valor={quantidadePremio} onChange={setQuantidadePremio} teclado="number-pad" placeholder="1" />
+            <Campo rotulo="Como o cliente retira" valor={instrucoesRetirada} onChange={setInstrucoesRetirada} multilinha maxLength={300} placeholder="Apresente o código no caixa. Válido para consumo no local." />
+          </Secao>
+        </>
+      ) : (
+        <>
+          <Secao titulo="Regras da campanha">
+            {isCartao ? (
+              <Campo rotulo="Quantos selos completam o cartão?" valor={selosNecessarios} onChange={setSelosNecessarios} teclado="number-pad" placeholder="10" dica="Mínimo 2, máximo 30." />
+            ) : (
+              <>
+                <CampoMoeda rotulo="A cada quanto ganha 1 cupom?" centavos={valorPorCupom} onChange={setValorPorCupom} dica="Mesmo padrão da web: valor em reais convertido para centavos." />
+                <Campo rotulo="Quantos ganhadores?" valor={quantidadeGanhadores} onChange={setQuantidadeGanhadores} teclado="number-pad" placeholder="1" dica="Mínimo 1, máximo 50." />
+              </>
+            )}
+            <View style={estilos.gradeIndicadores}>
+              <Campo rotulo="Começa em" valor={inicio} onChange={setInicio} teclado="numbers-and-punctuation" placeholder="AAAA-MM-DD" style={{ flex: 1 }} />
+              <Campo rotulo="Termina em" valor={fim} onChange={setFim} teclado="numbers-and-punctuation" placeholder="AAAA-MM-DD" style={{ flex: 1 }} />
+            </View>
+            {!isCartao ? <Campo rotulo="Data do sorteio" valor={sorteio} onChange={setSorteio} teclado="numbers-and-punctuation" placeholder="AAAA-MM-DD" dica="Precisa ser depois do término da campanha." /> : null}
+          </Secao>
+
+          <Secao titulo="Limites opcionais">
+            <CampoMoeda rotulo="Valor mínimo da compra" centavos={valorMinimoCompra} onChange={setValorMinimoCompra} dica="Deixe vazio ou zerado para valer qualquer compra." />
+            <Campo rotulo="Máximo por cliente, por dia" valor={limiteDiarioCliente} onChange={setLimiteDiarioCliente} teclado="number-pad" dica="Evita dezenas de compras seguidas para a mesma pessoa." />
+          </Secao>
+
+          <Secao titulo="Funcionário pode fazer">
+            <Cartao>
+              <Apoio>Admin e dono continuam podendo tudo. Aqui você libera só o balcão nesta campanha.</Apoio>
+              <Interruptor titulo="Disponibilizar / ativar" valor={funcionarioPodePublicar} onChange={setFuncionarioPodePublicar} />
+              <Interruptor titulo="Pausar" valor={funcionarioPodePausar} onChange={setFuncionarioPodePausar} />
+              <Interruptor titulo="Encerrar" valor={funcionarioPodeEncerrar} onChange={setFuncionarioPodeEncerrar} />
+              {!isCartao ? <Interruptor titulo="Sortear" valor={funcionarioPodeSortear} onChange={setFuncionarioPodeSortear} /> : null}
+            </Cartao>
+          </Secao>
+        </>
+      )}
+
+      <Cartao destaque>
+        <Texto>{resumoNovaCampanha({ tipo, selosNecessarios, valorPorCupom, quantidadeGanhadores, valorMinimoCompra, premio })}</Texto>
+      </Cartao>
+      <View style={estilos.acoesLinha}>
+        <Botao titulo="Salvar rascunho" variante="secundario" carregando={criar.isPending} onPress={() => salvar(false)} />
+        <Botao titulo="Disponibilizar" carregando={criar.isPending} onPress={() => salvar(true)} />
+      </View>
     </Folha>
   );
 }
 
-function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar: () => void }) {
-  const [nome, setNome] = useState("");
-  const [descricao, setDescricao] = useState("");
-  const [tipo, setTipo] = useState<TipoCampanha>("CARTAO_FIDELIDADE");
-  const [premio, setPremio] = useState("");
-  const [regra, setRegra] = useState("");
-  const [publicar, setPublicar] = useState(true);
-  const criar = useCriarCampanha(() => {
-    setNome(""); setDescricao(""); setPremio(""); setRegra(""); onFechar();
-  });
-  const inicio = new Date();
-  const fim = new Date(Date.now() + 30 * 86_400_000);
-  return (
-    <Folha visivel={visivel} titulo="Nova campanha" onFechar={onFechar}>
-      <Campo rotulo="Nome" valor={nome} onChange={setNome} />
-      <Campo rotulo="Descrição" valor={descricao} onChange={setDescricao} multilinha />
-      <Seletor<TipoCampanha> rotulo="Tipo" valor={tipo} onChange={setTipo} opcoes={[{ valor: "CARTAO_FIDELIDADE", rotulo: "Cartão fidelidade" }, { valor: "SORTEIO", rotulo: "Sorteio" }]} />
-      <Campo rotulo="Prêmio" valor={premio} onChange={setPremio} />
-      <Campo rotulo={tipo === "SORTEIO" ? "Reais por cupom" : "Selos necessários"} valor={regra} onChange={setRegra} teclado="numeric" />
-      <Interruptor titulo="Publicar agora" valor={publicar} onChange={setPublicar} />
-      <Botao titulo="Salvar campanha" largura="cheia" carregando={criar.isPending} onPress={() => {
-        if (!nome || !descricao || !premio || !regra) return avisar.erro("Preencha os campos principais.");
-        const numeroRegra = Number(regra.replace(",", "."));
-        criar.mutate({
-          nome,
-          descricao,
-          tipo,
-          nomePremio: premio,
-          iniciaEm: paraIso(inicio),
-          terminaEm: paraIso(fim),
-          publicar,
-          ...(tipo === "SORTEIO" ? { valorPorCupom: Math.round(numeroRegra * 100), quantidadeGanhadores: 1 } : { selosNecessarios: Math.round(numeroRegra) }),
-        });
-      }} />
-    </Folha>
-  );
+function dataInput(diasAgora: number) {
+  const d = new Date();
+  d.setDate(d.getDate() + diasAgora);
+  return d.toISOString().slice(0, 10);
+}
+
+function dataFormulario(valor: string, tipo: "inicio" | "fim" | "sorteio") {
+  const sufixo = tipo === "fim" ? "T23:59:59" : tipo === "sorteio" ? "T19:00:00" : "T00:00:00";
+  const d = new Date(`${valor.trim()}${sufixo}`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function isoDaData(valor: Date, tipo: "inicio" | "fim" | "sorteio") {
+  const base = valor.toISOString().slice(0, 10);
+  return dataFormulario(base, tipo)?.toISOString() ?? paraIso(valor);
+}
+
+function inteiroCampo(valor: string) {
+  const numero = Number(valor.replace(/\D/g, ""));
+  return Number.isFinite(numero) ? numero : null;
+}
+
+function resumoNovaCampanha({
+  tipo,
+  selosNecessarios,
+  valorPorCupom,
+  quantidadeGanhadores,
+  valorMinimoCompra,
+  premio,
+}: {
+  tipo: TipoCampanha;
+  selosNecessarios: string;
+  valorPorCupom: number | null;
+  quantidadeGanhadores: string;
+  valorMinimoCompra: number | null;
+  premio: string;
+}) {
+  if (tipo === "CARTAO_FIDELIDADE") {
+    const minimo = valorMinimoCompra ? ` de ${moeda(valorMinimoCompra)} ou mais` : "";
+    return `Cada compra${minimo} dá 1 selo. Com ${inteiroCampo(selosNecessarios) ?? 10} selos, o cliente ganha ${premio.trim() || "o prêmio"}.`;
+  }
+  const ganhadores = inteiroCampo(quantidadeGanhadores) ?? 1;
+  return `A cada ${moeda(valorPorCupom ?? 0)}, 1 cupom. No fim, ${plural(ganhadores, "ganhador leva", "ganhadores levam")} ${premio.trim() || "o prêmio"}.`;
 }
 
 function FormularioEntrega({ entrega, onFechar }: { entrega: Entrega | null; onFechar: () => void }) {
   const [codigo, setCodigo] = useState("");
+  const [documentoConferido, setDocumentoConferido] = useState("");
+  const [entregarParaTerceiro, setEntregarParaTerceiro] = useState(false);
+  const [recebedorNome, setRecebedorNome] = useState("");
+  const [recebedorDocumento, setRecebedorDocumento] = useState("");
   const [observacao, setObservacao] = useState("");
+  const [scannerAberto, setScannerAberto] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
   const entregar = useEntregar();
+
+  useEffect(() => {
+    if (!entrega) return;
+    setCodigo("");
+    setDocumentoConferido("");
+    setEntregarParaTerceiro(false);
+    setRecebedorNome("");
+    setRecebedorDocumento("");
+    setObservacao("");
+    setScannerAberto(false);
+  }, [entrega]);
+
+  const abrirScanner = async () => {
+    if (!permission?.granted) {
+      const resposta = await requestPermission();
+      if (!resposta.granted) {
+        avisar.erro("Permita o uso da câmera para ler o QR Code.");
+        return;
+      }
+    }
+    setScannerAberto(true);
+  };
+
   return (
-    <Folha visivel={Boolean(entrega)} titulo="Confirmar entrega" onFechar={onFechar}>
-      <Texto>{entrega?.premio}</Texto>
-      <Apoio>{entrega?.cliente}</Apoio>
-      <Campo rotulo="Código de retirada" valor={codigo} onChange={setCodigo} placeholder={entrega?.codigo} />
-      <Campo rotulo="Observação" valor={observacao} onChange={setObservacao} multilinha />
-      <Botao titulo="Confirmar entrega" icone="checkmark" largura="cheia" carregando={entregar.isPending} onPress={() => {
-        if (!entrega) return;
-        entregar.mutate({ id: entrega.id, codigo: codigo || undefined, observacao: observacao || undefined }, { onSuccess: onFechar });
-      }} />
-    </Folha>
+    <>
+      <Folha visivel={Boolean(entrega)} titulo="Confirmar entrega" onFechar={onFechar} grande>
+        <Cartao style={{ gap: spacing.sm }}>
+          <Titulo nivel={3}>{entrega?.premio}</Titulo>
+          <Apoio>{entrega?.campanha}</Apoio>
+          <Divisor />
+          <Linha rotulo="Cliente">{entrega?.cliente}</Linha>
+          <Linha rotulo="Telefone">{entrega?.telefoneCliente ? telefone(entrega.telefoneCliente) : ""}</Linha>
+        </Cartao>
+        {entrega?.instrucoesRetirada ? (
+          <Cartao style={{ gap: spacing.xs }}>
+            <Rotulo>Como retirar</Rotulo>
+            <Texto>{entrega.instrucoesRetirada}</Texto>
+          </Cartao>
+        ) : null}
+        <Campo rotulo="Código do prêmio" valor={codigo} onChange={setCodigo} placeholder={entrega?.codigo} autoCapitalize="characters" />
+        <Cartao style={{ gap: spacing.sm }}>
+          <Rotulo>Conferir cliente</Rotulo>
+          <Apoio>Leia o QR do cliente ou digite CPF/código do cartão.</Apoio>
+          <Botao titulo="Ler QR do cliente" icone="qr-code-outline" variante="secundario" largura="cheia" onPress={abrirScanner} />
+          <Campo rotulo="CPF ou QR/código" valor={documentoConferido} onChange={setDocumentoConferido} placeholder="CPF ou FID-000000" autoCapitalize="characters" />
+        </Cartao>
+        <Interruptor
+          titulo="Entregar para outra pessoa"
+          descricao="Use quando quem retirou não é o titular do prêmio."
+          valor={entregarParaTerceiro}
+          onChange={setEntregarParaTerceiro}
+        />
+        {entregarParaTerceiro ? (
+          <Cartao style={{ gap: spacing.sm }}>
+            <Campo rotulo="Nome de quem retirou" valor={recebedorNome} onChange={setRecebedorNome} placeholder="Nome completo" />
+            <Campo rotulo="CPF/documento de quem retirou" valor={recebedorDocumento} onChange={setRecebedorDocumento} placeholder="Opcional, mas recomendado" teclado="numeric" />
+          </Cartao>
+        ) : null}
+        <Campo rotulo="Observação" valor={observacao} onChange={setObservacao} multilinha />
+        <Botao titulo="Confirmar entrega" icone="checkmark" largura="cheia" carregando={entregar.isPending} onPress={() => {
+          if (!entrega) return;
+          if (entregarParaTerceiro && !recebedorNome.trim()) return avisar.erro("Informe quem retirou o prêmio.");
+          if (!codigo.trim() && !documentoConferido.trim() && !entregarParaTerceiro) return avisar.erro("Leia o QR, digite o CPF ou informe o código do prêmio.");
+          entregar.mutate({
+            id: entrega.id,
+            codigo: codigo.trim() || undefined,
+            documentoConferido: documentoConferido.trim() || undefined,
+            entregarParaTerceiro,
+            recebedorNome: recebedorNome.trim() || undefined,
+            recebedorDocumento: recebedorDocumento.trim() || undefined,
+            observacao: observacao.trim() || undefined,
+          }, { onSuccess: onFechar });
+        }} />
+      </Folha>
+      <ScannerQrCliente
+        visivel={scannerAberto}
+        onFechar={() => setScannerAberto(false)}
+        onLer={(valor) => {
+          setDocumentoConferido(textoBuscaDoQr(valor));
+          setScannerAberto(false);
+          avisar.informacao("QR lido. Confira antes de confirmar a entrega.");
+        }}
+      />
+    </>
   );
 }
 
@@ -973,13 +1904,13 @@ function AuthLayout({ subtitulo, voltar, children }: { subtitulo: string; voltar
   );
 }
 
-function Folha({ visivel, titulo, onFechar, children }: { visivel: boolean; titulo: string; onFechar: () => void; children: ReactNode }) {
+function Folha({ visivel, titulo, onFechar, children, grande = false }: { visivel: boolean; titulo: string; onFechar: () => void; children: ReactNode; grande?: boolean }) {
   return (
     <Modal visible={visivel} transparent animationType="slide" onRequestClose={onFechar} statusBarTranslucent>
       <View style={estilos.fundoFolha}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onFechar} accessibilityLabel="Fechar" />
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={estilos.ancoraFolha}>
-          <View style={estilos.folha}>
+          <View style={[estilos.folha, grande && estilos.folhaGrande]}>
           <View style={estilos.linhaEntre}>
             <Titulo nivel={2}>{titulo}</Titulo>
             <BotaoIcone icone="close" rotulo="Fechar" onPress={onFechar} />
@@ -1031,13 +1962,39 @@ function Atalho({ icone, titulo, onPress }: { icone: React.ComponentProps<typeof
   );
 }
 
-function Indicador({ titulo, valor, icone }: { titulo: string; valor: string; icone: React.ComponentProps<typeof Ionicons>["name"] }) {
+function Indicador({ titulo, valor, icone, detalhe }: { titulo: string; valor: string; icone: React.ComponentProps<typeof Ionicons>["name"]; detalhe?: string }) {
   return (
     <Cartao style={{ flex: 1 }}>
       <Icone nome={icone} cor={colors.primary} />
       <Numero>{valor}</Numero>
       <Apoio>{titulo}</Apoio>
+      {detalhe ? <Apoio>{detalhe}</Apoio> : null}
     </Cartao>
+  );
+}
+
+function GraficoMovimento({ pontos }: { pontos: Array<{ dia: string; valor: number }> }) {
+  const maximo = Math.max(...pontos.map((ponto) => ponto.valor), 0);
+  if (!pontos.length || maximo === 0) return <Vazio texto="Nenhuma compra registrada neste período." />;
+
+  const passo = pontos.length > 14 ? Math.ceil(pontos.length / 6) : 1;
+
+  return (
+    <View style={estilos.grafico}>
+      <View style={estilos.graficoBarras}>
+        {pontos.map((ponto, indice) => {
+          const altura = Math.max(6, Math.round((ponto.valor / maximo) * 112));
+          const mostrarRotulo = indice % passo === 0 || indice === pontos.length - 1;
+          return (
+            <View key={ponto.dia} style={estilos.graficoColuna}>
+              <Apoio numberOfLines={1} style={estilos.graficoValor}>{ponto.valor > 0 ? moeda(ponto.valor) : ""}</Apoio>
+              <View style={[estilos.graficoBarra, { height: altura }]} />
+              <Apoio style={estilos.graficoRotulo}>{mostrarRotulo ? diaMes(ponto.dia) : ""}</Apoio>
+            </View>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -1079,13 +2036,11 @@ function LinhaAcao({ icone, titulo, subtitulo, tom, onPress }: { icone: React.Co
 function LogoMarca({ grande = false }: { grande?: boolean }) {
   return (
     <View style={estilos.logoMarca}>
-      <View style={[estilos.logoSimbolo, grande && estilos.logoSimboloGrande]}>
-        <Icone nome="ticket-outline" tamanho={grande ? 26 : 18} cor={colors.primaryForeground} />
-      </View>
-      <Text style={[estilos.logoTexto, grande && estilos.logoTextoGrande]}>
-        Fideliza
-        <Text style={estilos.logoMais}>+</Text>
-      </Text>
+      <Image
+        source={LOGO}
+        resizeMode="contain"
+        style={grande ? estilos.logoImagemGrande : estilos.logoImagem}
+      />
     </View>
   );
 }
@@ -1158,36 +2113,14 @@ const estilos = StyleSheet.create({
   logoMarca: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm,
   },
-  logoSimbolo: {
-    width: 36,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    shadowColor: colors.heading,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.14,
-    shadowRadius: 4,
-    elevation: 2,
+  logoImagem: {
+    width: 96,
+    height: 44,
   },
-  logoSimboloGrande: {
-    width: 58,
-    height: 58,
-    borderRadius: 18,
-  },
-  logoTexto: {
-    color: colors.heading,
-    fontSize: fontSize.lg,
-    fontWeight: fontWeight.semibold,
-  },
-  logoTextoGrande: {
-    fontSize: fontSize["2xl"],
-  },
-  logoMais: {
-    color: colors.primary,
+  logoImagemGrande: {
+    width: 150,
+    height: 70,
   },
   divisorComTexto: {
     flexDirection: "row",
@@ -1245,6 +2178,54 @@ const estilos = StyleSheet.create({
     gap: spacing.md,
     paddingBottom: 112,
   },
+  filtroResumo: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  painelFiltros: {
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+  campanhaCard: {
+    gap: spacing.md,
+    overflow: "hidden",
+  },
+  campanhaTopo: {
+    flexDirection: "row",
+    gap: spacing.md,
+    alignItems: "flex-start",
+  },
+  campanhaIcone: {
+    width: 52,
+    height: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primary,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.heading,
+  },
+  campanhaFaixa: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.accent,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+  },
+  campanhaProgressoFundo: {
+    height: 8,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+  },
+  campanhaProgressoBarra: {
+    height: "100%",
+    backgroundColor: colors.primary,
+  },
   navbar: {
     position: "absolute",
     left: spacing.lg,
@@ -1265,6 +2246,24 @@ const estilos = StyleSheet.create({
     shadowRadius: 18,
     elevation: 5,
     overflow: "hidden",
+  },
+  fabCompra: {
+    position: "absolute",
+    right: spacing.xl,
+    bottom: 92,
+    width: 58,
+    height: 58,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.heading,
+    shadowColor: colors.heading,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 8,
   },
   navItem: {
     flex: 1,
@@ -1310,9 +2309,37 @@ const estilos = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.md,
   },
+  folhaGrande: {
+    maxHeight: "95%",
+  },
   conteudoFolha: {
     gap: spacing.md,
     paddingBottom: spacing.xl,
+  },
+  scannerHeader: {
+    backgroundColor: colors.surface,
+    padding: spacing.lg,
+    borderBottomWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  camera: {
+    flex: 1,
+  },
+  miraQr: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(8, 41, 29, 0.18)",
+  },
+  miraCaixa: {
+    width: 230,
+    height: 230,
+    borderWidth: 3,
+    borderColor: colors.primary,
+    backgroundColor: "transparent",
   },
   itemMenuCompleto: {
     minHeight: theme.touchTarget,
@@ -1390,6 +2417,11 @@ const estilos = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.md,
   },
+  topoDetalhe: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
   linhaComIcone: {
     flex: 1,
     flexDirection: "row",
@@ -1408,6 +2440,37 @@ const estilos = StyleSheet.create({
     backgroundColor: colors.surfaceMuted,
     borderWidth: borderWidth.hairline,
     borderColor: colors.border,
+  },
+  grafico: {
+    minHeight: 170,
+    justifyContent: "flex-end",
+  },
+  graficoBarras: {
+    minHeight: 150,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.xs,
+  },
+  graficoColuna: {
+    flex: 1,
+    minWidth: 14,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: spacing.xs,
+  },
+  graficoValor: {
+    display: "none",
+  },
+  graficoBarra: {
+    alignSelf: "stretch",
+    backgroundColor: colors.primary,
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+  },
+  graficoRotulo: {
+    minHeight: 16,
+    fontSize: 9,
+    textAlign: "center",
   },
   iconeLinha: {
     width: 42,

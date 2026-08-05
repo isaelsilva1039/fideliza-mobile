@@ -154,6 +154,10 @@ export interface NovaCampanha {
   descricaoPremio?: string;
   quantidadePremio?: number;
   instrucoesRetirada?: string;
+  funcionarioPodePublicar?: boolean;
+  funcionarioPodePausar?: boolean;
+  funcionarioPodeEncerrar?: boolean;
+  funcionarioPodeSortear?: boolean;
   publicar: boolean;
 }
 
@@ -260,8 +264,17 @@ export function listarEntregas(filtro: FiltroEntregas = {}): Promise<c.Pagina<c.
   return api.get<c.Pagina<c.Entrega>>(`/api/entregas${montarQuery({ ...filtro })}`);
 }
 
+export interface BaixaEntrega {
+  codigo?: string;
+  documentoConferido?: string;
+  entregarParaTerceiro?: boolean;
+  recebedorNome?: string;
+  recebedorDocumento?: string;
+  observacao?: string;
+}
+
 /** Baixa a entrega. Responde 204 — sem corpo. */
-export function entregar(id: string, entrada: { codigo?: string; observacao?: string }): Promise<void> {
+export function entregar(id: string, entrada: BaixaEntrega): Promise<void> {
   return api.patch<void>(`/api/entregas/${id}/entregar`, entrada);
 }
 

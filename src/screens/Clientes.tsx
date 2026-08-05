@@ -191,14 +191,12 @@ export function NovoClienteFolha({
   const [nome, setNome] = useState("");
   const [documento, setDocumento] = useState("");
   const [telefone, setTelefone] = useState("");
-  const [email, setEmail] = useState("");
   const [erros, setErros] = useState<Record<string, string>>({});
 
   const limpar = () => {
     setNome("");
     setDocumento("");
     setTelefone("");
-    setEmail("");
     setErros({});
   };
 
@@ -213,8 +211,8 @@ export function NovoClienteFolha({
     const digitosTel = telefone.replace(/\D/g, "");
 
     if (!nome.trim()) problemas.nome = "Informe o nome.";
-    if (digitosDoc.length !== 11 && digitosDoc.length !== 14) {
-      problemas.documento = "CPF tem 11 dígitos; CNPJ, 14.";
+    if (digitosDoc.length !== 11) {
+      problemas.documento = "CPF tem 11 dígitos.";
     }
     if (digitosTel.length < 10) problemas.telefone = "Informe DDD e número.";
 
@@ -228,7 +226,6 @@ export function NovoClienteFolha({
         nome: nome.trim(),
         documento: digitosDoc,
         telefone: digitosTel,
-        email: email.trim() || undefined,
       },
       // O servidor tem a última palavra: documento repetido só ele sabe.
       { onError: (erro) => setErros(errosPorCampo(erro)) },
@@ -269,12 +266,12 @@ export function NovoClienteFolha({
         erro={erros.nome}
       />
       <Campo
-        rotulo="CPF ou CNPJ"
+        rotulo="CPF"
         valor={documento}
         onChange={(v) => setDocumento(formatarDocumento(v))}
         placeholder="000.000.000-00"
         teclado="number-pad"
-        maxLength={18}
+        maxLength={14}
         erro={erros.documento}
       />
       <Campo
@@ -286,15 +283,6 @@ export function NovoClienteFolha({
         maxLength={16}
         dica="É para onde vai o código quando o cliente consultar o cartão."
         erro={erros.telefone}
-      />
-      <Campo
-        rotulo="E-mail (opcional)"
-        valor={email}
-        onChange={setEmail}
-        placeholder="cliente@email.com"
-        teclado="email-address"
-        autoCapitalize="none"
-        erro={erros.email}
       />
     </Folha>
   );

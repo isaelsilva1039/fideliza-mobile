@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import type { ReactNode } from "react";
+import { Children, type ReactNode } from "react";
 import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 
 import { colors, fontSize, fontWeight, radius, spacing, toneColors, type Tone } from "../../theme";
@@ -125,7 +125,7 @@ export function Cartao({
         style,
       ]}
     >
-      {children}
+      {textoSeguro(children)}
     </View>
   );
 }
@@ -153,7 +153,7 @@ export function Secao({
         <Rotulo>{titulo}</Rotulo>
         {acao}
       </View>
-      {children}
+      {textoSeguro(children)}
     </View>
   );
 }
@@ -222,13 +222,21 @@ export function Linha({
     <View style={[estilos.linha, style]}>
       <Apoio style={{ flexShrink: 0 }}>{rotulo}</Apoio>
       <View style={{ flex: 1, alignItems: "flex-end" }}>
-        {typeof children === "string" || typeof children === "number" ? (
-          <Texto style={{ textAlign: "right" }}>{children}</Texto>
-        ) : (
-          children
-        )}
+        {textoSeguro(children, { textAlign: "right" })}
       </View>
     </View>
+  );
+}
+
+function textoSeguro(children: ReactNode, style?: StyleProp<TextStyle>) {
+  return Children.toArray(children).map((child, indice) =>
+    typeof child === "string" || typeof child === "number" ? (
+      <Texto key={`texto-${indice}`} style={style}>
+        {child}
+      </Texto>
+    ) : (
+      child
+    ),
   );
 }
 

@@ -30,6 +30,7 @@ export function Folha({
   aoFechar,
   children,
   rodape,
+  grande = false,
 }: {
   visivel: boolean;
   titulo: string;
@@ -37,6 +38,7 @@ export function Folha({
   children: ReactNode;
   /** Fica fixo no pé, fora da área que rola — é onde vão os botões. */
   rodape?: ReactNode;
+  grande?: boolean;
 }) {
   return (
     <Modal
@@ -57,7 +59,7 @@ export function Folha({
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={estilos.ancora}
         >
-          <View style={estilos.painel}>
+          <View style={[estilos.painel, grande && estilos.painelGrande]}>
             <View style={estilos.cabecalho}>
               <Titulo nivel={2} style={{ flex: 1 }} numberOfLines={1}>
                 {titulo}
@@ -132,6 +134,9 @@ const estilos = StyleSheet.create({
     borderTopWidth: 2,
     borderTopColor: colors.primary,
     maxHeight: "88%",
+  },
+  painelGrande: {
+    maxHeight: "95%",
   },
   cabecalho: {
     flexDirection: "row",

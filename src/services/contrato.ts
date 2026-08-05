@@ -176,6 +176,10 @@ export interface Campanha {
   /** Frase pronta do servidor: "1 selo a cada R$ 20,00". */
   regraEmUmaFrase: string;
   podeSortear: boolean;
+  funcionarioPodePublicar: boolean;
+  funcionarioPodePausar: boolean;
+  funcionarioPodeEncerrar: boolean;
+  funcionarioPodeSortear: boolean;
   /** Transições que o servidor aceita agora. Vazio quando não há mais nenhuma. */
   proximasSituacoes: SituacaoCampanha[];
 }
@@ -316,6 +320,10 @@ export interface Entrega {
   instrucoesRetirada?: string;
   solicitadoEm: string;
   entregueEm?: string;
+  documentoConferido?: string;
+  entregueParaTerceiro?: boolean;
+  recebedorNome?: string;
+  recebedorDocumento?: string;
   observacao?: string;
 }
 

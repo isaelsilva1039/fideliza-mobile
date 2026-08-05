@@ -314,7 +314,7 @@ export function useCancelarLancamento() {
 
 export function useEntregar() {
   return useMutacao(
-    (entrada: { id: string; codigo?: string; observacao?: string }) =>
+    (entrada: { id: string } & servico.BaixaEntrega) =>
       servico.entregar(entrada.id, entrada),
     { sucesso: "Prêmio entregue." },
   );
