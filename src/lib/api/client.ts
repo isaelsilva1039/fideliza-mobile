@@ -184,7 +184,18 @@ async function requisitar<T>(caminho: string, init?: RequestInit): Promise<T> {
   // 204 é a resposta das baixas (`entregar`, `cancelar`): sucesso sem corpo.
   if (resposta.status === 204) return undefined as T;
 
-  return (await resposta.json()) as T;
+  /*
+   * Corpo vazio com 2xx também é sucesso sem conteúdo.
+   *
+   * Nem toda rota que não devolve nada responde 204 — método `void` no Spring sai
+   * como 200 com corpo vazio. Chamar `json()` nisso estoura "JSON Parse error",
+   * que aparece na tela como se o cliente não tivesse sido salvo, quando foi.
+   * Ler como texto primeiro custa nada e tira essa classe de erro do caminho.
+   */
+  const texto = await resposta.text();
+  if (!texto) return undefined as T;
+
+  return JSON.parse(texto) as T;
 }
 
 const comCorpo = (metodo: string) =>

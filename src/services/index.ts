@@ -85,6 +85,17 @@ export function salvarConfiguracao(entrada: c.Configuracao): Promise<c.Configura
   return api.put<c.Configuracao>("/api/configuracoes", entrada);
 }
 
+/**
+ * Estado do WhatsApp, sob demanda.
+ *
+ * Rota separada da leitura de configurações porque aqui a API fala com o
+ * provedor: pendurar isso no GET faria a tela herdar a latência — e a
+ * indisponibilidade — dele.
+ */
+export function obterEstadoWhatsApp(): Promise<c.EstadoWhatsApp> {
+  return api.get<c.EstadoWhatsApp>("/api/configuracoes/whatsapp");
+}
+
 /* -------------------------------------------------------------------------- */
 /* Início                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -227,10 +238,45 @@ export interface EdicaoCliente {
   telefone?: string;
   email?: string;
   situacao?: c.SituacaoCliente;
+  /** Vetor gerado no aparelho. Imagem alguma é enviada. */
+  vetorFacial?: number[];
+  consentimentoFacial?: boolean;
 }
 
-export function editarCliente(id: string, entrada: EdicaoCliente): Promise<c.Cliente> {
-  return api.patch<c.Cliente>(`/api/clientes/${id}`, entrada);
+/**
+ * Grava o rosto de um cliente que já existe.
+ *
+ * Rota separada da edição porque o vetor não é campo de cadastro: tem regra
+ * própria no servidor (tamanho mínimo, consentimento) e é substituído por
+ * inteiro a cada captura, nunca mesclado.
+ */
+export function cadastrarBiometriaCliente(
+  id: string,
+  vetor: number[],
+  consentimento: boolean,
+): Promise<void> {
+  return api.post<void>(`/api/clientes/${id}/biometria`, { vetor, consentimento });
+}
+
+export async function editarCliente(
+  id: string,
+  entrada: EdicaoCliente,
+): Promise<c.Cliente> {
+  const { vetorFacial, consentimentoFacial, ...cadastro } = entrada;
+  const cliente = await api.patch<c.Cliente>(`/api/clientes/${id}`, cadastro);
+
+  /*
+   * A biometria vai depois, e só quando houver captura nova.
+   *
+   * São duas chamadas porque são duas rotas — o PATCH do cadastro não aceita
+   * vetor. A ordem importa: se o rosto falhasse primeiro, o nome corrigido
+   * também se perderia, e o atendente veria "erro" sem saber o que foi salvo.
+   */
+  if (vetorFacial) {
+    await cadastrarBiometriaCliente(id, vetorFacial, consentimentoFacial === true);
+  }
+
+  return cliente;
 }
 
 export function reconhecerClientePorRosto(

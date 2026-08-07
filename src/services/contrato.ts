@@ -342,10 +342,35 @@ export interface Membro {
 
 export interface Configuracao {
   avisarCliente: boolean;
+  /**
+   * Manda o aviso também por WhatsApp, além da lista da consulta do cliente.
+   *
+   * Chave separada de `avisarCliente` porque responde outra pergunta: a loja que
+   * ficou sem número conectado precisa parar de tentar enviar sem perder os
+   * avisos do portal.
+   */
+  avisarWhatsapp: boolean;
   bloquearProprioCpf: boolean;
   bloquearDuplicados: boolean;
   /** Quando ativo, o rosto identifica e o código do telefone ainda autentica. */
   rostoExigeCodigo: boolean;
+}
+
+/**
+ * Estado do número de WhatsApp da plataforma.
+ *
+ * A falha mais comum é silenciosa: a instância desconecta do celular e toda
+ * mensagem passa a ser recusada. Sem uma tela dizendo isso, a loja só descobre
+ * quando um cliente reclama que parou de receber.
+ */
+export interface EstadoWhatsApp {
+  /** Falso significa envio simulado — não é erro, é ambiente sem credencial. */
+  configurado: boolean;
+  conectado: boolean;
+  /** O aparelho pareado está com internet. Sem isso a mensagem fica parada. */
+  celularConectado: boolean;
+  /** O que o provedor respondeu, para mostrar como está. */
+  detalhe: string;
 }
 
 /* -------------------------------------------------------------------------- */

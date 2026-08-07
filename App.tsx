@@ -37,8 +37,10 @@ import {
   useCriarCliente,
   useCriarEmpresa,
   useCriarMembro,
+  useEditarCliente,
   useEditarEmpresa,
   useEntregar,
+  useEstadoWhatsApp,
   useEntregas,
   useEquipe,
   useInicio,
@@ -69,6 +71,7 @@ import {
   type Participante,
   type Perfil,
   type SituacaoCampanha,
+  type SituacaoCliente,
   type SituacaoEntrega,
   type TipoCampanha,
 } from "./src/services/contrato";
@@ -293,7 +296,15 @@ function PortalCliente({ fluxo, onFluxo }: { fluxo: FluxoPublico; onFluxo: (flux
       setPedidoId(pedido.pedidoId);
       setTelefoneFinal(pedido.finalDoTelefone);
       onFluxo("portal-codigo");
-      if (pedido.codigoDemonstracao) Alert.alert("Código de demonstração", pedido.codigoDemonstracao);
+      /*
+       * O código vai para o WhatsApp do cliente. Este alerta só aparece quando a
+       * plataforma está sem credencial de envio configurada: aí nada foi enviado
+       * a lugar nenhum, e sem mostrar na tela não haveria como concluir o acesso
+       * em ambiente de desenvolvimento.
+       */
+      if (pedido.codigoDemonstracao) {
+        Alert.alert("Envio de mensagem desativado", `Seu código é ${pedido.codigoDemonstracao}.`);
+      }
     } catch (erro) {
       avisar.erro(mensagemDoErro(erro));
     } finally {
@@ -331,7 +342,10 @@ function PortalCliente({ fluxo, onFluxo }: { fluxo: FluxoPublico; onFluxo: (flux
       setCameraFacialAberta(false);
       onFluxo("portal-codigo");
       if (resultado.pedidoCodigo.codigoDemonstracao) {
-        Alert.alert("Código de demonstração", resultado.pedidoCodigo.codigoDemonstracao);
+        Alert.alert(
+          "Envio de mensagem desativado",
+          `Seu código é ${resultado.pedidoCodigo.codigoDemonstracao}.`,
+        );
       }
     } catch (erro) {
       avisar.erro(mensagemDoErro(erro));
@@ -365,7 +379,10 @@ function PortalCliente({ fluxo, onFluxo }: { fluxo: FluxoPublico; onFluxo: (flux
 
   if (fluxo === "portal-codigo") {
     return (
-      <AuthLayout subtitulo={`Código enviado para ${telefoneFinal}.`} voltar={() => onFluxo("portal-documento")}>
+      <AuthLayout
+        subtitulo={`Enviamos um código de 6 números no WhatsApp ${telefoneFinal}.`}
+        voltar={() => onFluxo("portal-documento")}
+      >
         <Campo rotulo="Código" valor={codigo} onChange={setCodigo} teclado="numeric" placeholder="000000" />
         <Botao titulo="Abrir meu cartão" icone="card-outline" largura="cheia" carregando={carregando} onPress={() => void abrirCartao()} />
       </AuthLayout>
@@ -1293,6 +1310,7 @@ function ParticipanteCard({ participante, tipo, onPress }: { participante: Parti
 function ClienteDetalhe({ id, onVoltar, onAbrirCampanha }: { id: string; onVoltar: () => void; onAbrirCampanha: (id: string) => void }) {
   const ficha = useFichaCliente(id);
   const [compraAberta, setCompraAberta] = useState(false);
+  const [edicaoAberta, setEdicaoAberta] = useState(false);
 
   if (ficha.isLoading) return <CarregandoBloco />;
   if (ficha.isError || !ficha.data) return <ErroBloco />;
@@ -1304,7 +1322,17 @@ function ClienteDetalhe({ id, onVoltar, onAbrirCampanha }: { id: string; onVolta
   return (
     <>
       <ScrollView contentContainerStyle={estilos.conteudoComNav}>
-        <TopoDetalhe titulo={cliente.nome} subtitulo="Ficha do cliente" onVoltar={onVoltar} acao={<Botao titulo="Compra" icone="cash-outline" compacto onPress={() => setCompraAberta(true)} />} />
+        <TopoDetalhe
+          titulo={cliente.nome}
+          subtitulo="Ficha do cliente"
+          onVoltar={onVoltar}
+          acao={
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+              <BotaoIcone icone="create-outline" rotulo="Editar cliente" onPress={() => setEdicaoAberta(true)} />
+              <Botao titulo="Compra" icone="cash-outline" compacto onPress={() => setCompraAberta(true)} />
+            </View>
+          }
+        />
         <Cartao>
           <View style={estilos.linhaComIcone}>
             <Avatar nome={cliente.nome} tamanho={52} />
@@ -1389,6 +1417,10 @@ function ClienteDetalhe({ id, onVoltar, onAbrirCampanha }: { id: string; onVolta
         ) : null}
       </ScrollView>
       <FormularioCompra cliente={compraAberta ? cliente : null} onFechar={() => setCompraAberta(false)} />
+      <FormularioEditarCliente
+        cliente={edicaoAberta ? cliente : null}
+        onFechar={() => setEdicaoAberta(false)}
+      />
     </>
   );
 }
@@ -1628,6 +1660,110 @@ function BarraLista({ titulo, acao }: { titulo: string; acao?: ReactNode }) {
       <Titulo nivel={2}>{titulo}</Titulo>
       {acao}
     </View>
+  );
+}
+
+/**
+ * Edição do cadastro do cliente.
+ *
+ * Mesmos campos do cadastro, menos o documento: ele identifica a pessoa, e
+ * trocá-lo transformaria este cadastro em outro — com os selos do antigo. O
+ * servidor também recusa a troca.
+ *
+ * A captura facial é a mesma do cadastro, e resolve os dois casos que aparecem
+ * no balcão: quem não registrou o rosto na primeira vez, e quem mudou de
+ * aparência e deixou de ser reconhecido.
+ */
+function FormularioEditarCliente({ cliente, onFechar }: { cliente: Cliente | null; onFechar: () => void }) {
+  const [nome, setNome] = useState("");
+  const [fone, setFone] = useState("");
+  const [situacao, setSituacao] = useState<SituacaoCliente>("ATIVO");
+  const [vetorFacial, setVetorFacial] = useState<number[]>();
+  const [cameraFacialAberta, setCameraFacialAberta] = useState(false);
+
+  const editar = useEditarCliente(onFechar);
+
+  /*
+   * Abrir a folha recomeça do que está gravado. Sem isto, quem fecha no meio de
+   * uma edição e reabre encontra o rascunho antigo — inclusive uma captura
+   * facial que havia desistido de salvar.
+   */
+  useEffect(() => {
+    if (!cliente) return;
+    setNome(cliente.nome);
+    setFone(cliente.telefone);
+    setSituacao(cliente.situacao);
+    setVetorFacial(undefined);
+  }, [cliente]);
+
+  return (
+    <>
+      <Folha visivel={Boolean(cliente) && !cameraFacialAberta} titulo="Editar cliente" onFechar={onFechar}>
+        <Campo rotulo="Nome" valor={nome} onChange={setNome} />
+        <Campo rotulo="Telefone" valor={fone} onChange={setFone} teclado="phone-pad" />
+        <Apoio>É para onde vão os avisos de selo e prêmio, no WhatsApp.</Apoio>
+        <Seletor<SituacaoCliente>
+          rotulo="Situação"
+          valor={situacao}
+          onChange={setSituacao}
+          opcoes={[
+            { valor: "ATIVO", rotulo: "Ativo" },
+            { valor: "INATIVO", rotulo: "Inativo" },
+          ]}
+        />
+        <Cartao destaque={Boolean(vetorFacial)}>
+          <View style={estilos.linhaEntre}>
+            <View style={{ flex: 1, gap: spacing.xs }}>
+              <Rotulo>Reconhecimento facial</Rotulo>
+              <Apoio>
+                {vetorFacial
+                  ? "Rosto capturado. A foto não será salva."
+                  : "Capture de novo se o cliente deixou de ser reconhecido."}
+              </Apoio>
+            </View>
+            {vetorFacial ? <Icone nome="checkmark-circle" cor={colors.success} tamanho={28} /> : null}
+          </View>
+          <Botao
+            titulo={vetorFacial ? "Capturar novamente" : "Usar câmera"}
+            icone="camera-outline"
+            variante="secundario"
+            largura="cheia"
+            onPress={() => setCameraFacialAberta(true)}
+          />
+        </Cartao>
+        <Apoio>
+          O CPF {documento(cliente?.documento ?? "")} não muda — ele identifica o cliente e
+          carrega os selos dele.
+        </Apoio>
+        <Botao
+          titulo="Salvar"
+          largura="cheia"
+          carregando={editar.isPending}
+          onPress={() => {
+            if (!cliente) return;
+            editar.mutate({
+              id: cliente.id,
+              nome,
+              telefone: fone,
+              situacao,
+              vetorFacial,
+              consentimentoFacial: Boolean(vetorFacial),
+            });
+          }}
+        />
+      </Folha>
+      <ReconhecimentoFacial
+        visivel={cameraFacialAberta}
+        modo="cadastro"
+        titulo="Cadastrar rosto"
+        onFechar={() => setCameraFacialAberta(false)}
+        onConcluir={(vetor) => {
+          setVetorFacial(vetor);
+          setCameraFacialAberta(false);
+          avisar.sucesso("Rosto capturado. Nenhuma foto foi salva.");
+        }}
+      />
+    </>
   );
 }
 
@@ -2397,6 +2533,13 @@ function ConfiguracoesCard() {
     <Cartao>
       <Titulo nivel={3}>Configurações da loja</Titulo>
       <Interruptor titulo="Avisar cliente" valor={valor.avisarCliente} onChange={(v) => setValor({ ...valor, avisarCliente: v })} />
+      <Interruptor
+        titulo="Mandar o aviso por WhatsApp"
+        descricao="O aviso vai para o WhatsApp do cliente, no número do cadastro. Desligado, ele continua aparecendo na consulta do cartão."
+        valor={Boolean(valor.avisarWhatsapp) && valor.avisarCliente}
+        onChange={(v) => setValor({ ...valor, avisarWhatsapp: v })}
+      />
+      {valor.avisarCliente ? <ConexaoWhatsApp /> : null}
       <Interruptor titulo="Bloquear próprio CPF" valor={valor.bloquearProprioCpf} onChange={(v) => setValor({ ...valor, bloquearProprioCpf: v })} />
       <Interruptor titulo="Bloquear duplicados" valor={valor.bloquearDuplicados} onChange={(v) => setValor({ ...valor, bloquearDuplicados: v })} />
       <Interruptor
@@ -2407,6 +2550,48 @@ function ConfiguracoesCard() {
       />
       <Botao titulo="Salvar" carregando={salvar.isPending} onPress={() => salvar.mutate(valor)} />
     </Cartao>
+  );
+}
+
+/**
+ * O número de WhatsApp está conectado?
+ *
+ * Existe porque a falha aqui é silenciosa: a instância desconecta do celular e,
+ * a partir dali, toda mensagem é recusada sem que nada apareça na tela. Sem esta
+ * linha, a loja descobre semanas depois, por um cliente reclamando.
+ *
+ * Erro na consulta não vira bloco de erro: as chaves acima continuam utilizáveis
+ * sem esta informação, e uma tela de erro no meio delas sugeriria que pararam.
+ */
+function ConexaoWhatsApp() {
+  const query = useEstadoWhatsApp();
+  const estado = query.data;
+
+  const ok = Boolean(estado?.configurado && estado.conectado && estado.celularConectado);
+  const tom: Tone = query.isLoading || query.isError || !estado ? "neutral" : ok ? "success" : "warning";
+
+  const texto = (() => {
+    if (query.isLoading) return "Verificando o número…";
+    if (query.isError || !estado) return "Não foi possível verificar o número agora.";
+    if (!estado.configurado) return "Sem número configurado — as mensagens não saem.";
+    if (!estado.conectado) return `Número desconectado. ${estado.detalhe}`;
+    if (!estado.celularConectado) {
+      return "Número conectado, mas o celular está sem internet: as mensagens ficam paradas.";
+    }
+    return "Número conectado e enviando.";
+  })();
+
+  return (
+    <View style={{ gap: spacing.xs }}>
+      <Selo tom={tom}>{ok ? "WhatsApp conectado" : "WhatsApp"}</Selo>
+      <Apoio>{texto}</Apoio>
+      <Botao
+        titulo={query.isFetching ? "Verificando…" : "Verificar agora"}
+        variante="secundario"
+        carregando={query.isFetching}
+        onPress={() => query.refetch()}
+      />
+    </View>
   );
 }
 

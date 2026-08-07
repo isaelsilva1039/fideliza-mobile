@@ -42,6 +42,7 @@ const chaves = {
   auditoria: (empresaId: string, filtro: unknown) =>
     [empresaId, "auditoria", filtro] as const,
   configuracao: (empresaId: string) => [empresaId, "configuracao"] as const,
+  estadoWhatsApp: (empresaId: string) => [empresaId, "configuracao", "whatsapp"] as const,
   /** Fora da empresa ativa: a lista de empresas não pertence a nenhuma delas. */
   empresas: () => ["empresas"] as const,
   todasEmpresas: () => ["empresas", "todas"] as const,
@@ -155,6 +156,25 @@ export function useConfiguracao() {
     queryKey: chaves.configuracao(empresaId),
     queryFn: servico.obterConfiguracao,
     enabled: Boolean(empresaId),
+  });
+}
+
+/**
+ * Estado do WhatsApp da plataforma.
+ *
+ * Sem revalidar ao voltar para o app e com um minuto de validade: cada busca é
+ * uma chamada da API ao provedor, e reabrir o app não é motivo para consultar de
+ * novo. Quem quiser agora tem o botão de verificar na tela.
+ */
+export function useEstadoWhatsApp() {
+  const empresaId = useEmpresaAtivaId();
+
+  return useQuery({
+    queryKey: chaves.estadoWhatsApp(empresaId),
+    queryFn: servico.obterEstadoWhatsApp,
+    enabled: Boolean(empresaId),
+    staleTime: 60_000,
+    retry: false,
   });
 }
 
