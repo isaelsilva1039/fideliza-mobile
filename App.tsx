@@ -22,6 +22,7 @@ import {
 
 import { Avatar, Apoio, Cartao, Divisor, Icone, Linha, Numero, Rotulo, Secao, Selo, Selos, Texto, Titulo } from "./src/components/ui/base";
 import { Botao, BotaoIcone } from "./src/components/ui/Botao";
+import { ReconhecimentoFacial } from "./src/components/ReconhecimentoFacial";
 import { Busca, Campo, CampoMoeda, Filtros, Interruptor, Seletor } from "./src/components/ui/formulario";
 import { pode, perfisAtribuiveis } from "./src/constants/permissoes";
 import {
@@ -282,6 +283,7 @@ function PortalCliente({ fluxo, onFluxo }: { fluxo: FluxoPublico; onFluxo: (flux
   const [codigo, setCodigo] = useState("");
   const [cartao, setCartao] = useState<CartaoDoPortal>();
   const [carregando, setCarregando] = useState(false);
+  const [cameraFacialAberta, setCameraFacialAberta] = useState(false);
 
   async function pedirCodigo() {
     if (!documentoValor) return avisar.erro("Informe o documento.");
@@ -313,12 +315,51 @@ function PortalCliente({ fluxo, onFluxo }: { fluxo: FluxoPublico; onFluxo: (flux
     }
   }
 
+  async function abrirCartaoComRosto(vetor: number[]) {
+    try {
+      const resultado = await servico.consultarPortalPorRosto(vetor);
+      if (resultado.cartao) {
+        setPedidoId("");
+        setCartao(resultado.cartao);
+        setCameraFacialAberta(false);
+        onFluxo("portal-cartao");
+        return;
+      }
+
+      setPedidoId(resultado.pedidoCodigo.pedidoId);
+      setTelefoneFinal(resultado.pedidoCodigo.finalDoTelefone);
+      setCameraFacialAberta(false);
+      onFluxo("portal-codigo");
+      if (resultado.pedidoCodigo.codigoDemonstracao) {
+        Alert.alert("Código de demonstração", resultado.pedidoCodigo.codigoDemonstracao);
+      }
+    } catch (erro) {
+      avisar.erro(mensagemDoErro(erro));
+      throw erro;
+    }
+  }
+
   if (fluxo === "portal-documento") {
     return (
-      <AuthLayout subtitulo="Consulte cartões, cupons e prêmios." voltar={() => onFluxo("login")}>
-        <Campo rotulo="CPF ou CNPJ" valor={documentoValor} onChange={setDocumentoValor} teclado="numeric" placeholder="Somente números" />
-        <Botao titulo="Receber código" icone="chatbubble-ellipses-outline" largura="cheia" carregando={carregando} onPress={() => void pedirCodigo()} />
-      </AuthLayout>
+      <>
+        <AuthLayout subtitulo="Consulte cartões, cupons e prêmios." voltar={() => onFluxo("login")}>
+          <Botao titulo="Entrar com o rosto" icone="scan-outline" largura="cheia" onPress={() => setCameraFacialAberta(true)} />
+          <View style={estilos.divisorComTexto}>
+            <View style={estilos.linha} />
+            <Apoio>ou use outro método</Apoio>
+            <View style={estilos.linha} />
+          </View>
+          <Campo rotulo="CPF ou CNPJ" valor={documentoValor} onChange={setDocumentoValor} teclado="numeric" placeholder="Somente números" />
+          <Botao titulo="Receber código" icone="chatbubble-ellipses-outline" largura="cheia" carregando={carregando} onPress={() => void pedirCodigo()} />
+        </AuthLayout>
+        <ReconhecimentoFacial
+          visivel={cameraFacialAberta}
+          modo="reconhecimento"
+          titulo="Entrar com o rosto"
+          onFechar={() => setCameraFacialAberta(false)}
+          onConcluir={abrirCartaoComRosto}
+        />
+      </>
     );
   }
 
@@ -354,6 +395,21 @@ function CartaoPublico({
     const atual = cartao.notificacoes.find((item) => item.id === id);
     if (!atual || atual.lidaEm) return;
 
+    // O acesso facial sem segundo fator não cria um pedido de código. Nesse
+    // caso a leitura vale apenas nesta sessão, sem chamar a rota protegida pelo
+    // pedido e provocar um 403.
+    if (!pedidoId) {
+      const notificacoes = cartao.notificacoes.map((item) =>
+        item.id === id ? { ...item, lidaEm: new Date().toISOString() } : item,
+      );
+      onCartao({
+        ...cartao,
+        notificacoes,
+        notificacoesNaoLidas: notificacoes.filter((item) => !item.lidaEm).length,
+      });
+      return;
+    }
+
     setLendoNotificacaoId(id);
     try {
       const atualizada = await servico.marcarNotificacaoPortalComoLida(pedidoId, id);
@@ -373,7 +429,7 @@ function CartaoPublico({
   }
 
   async function atualizarNotificacoes() {
-    if (!cartao) return;
+    if (!cartao || !pedidoId) return;
     setAtualizandoNotificacoes(true);
     try {
       const notificacoes = await servico.listarNotificacoesPortal(pedidoId);
@@ -1579,16 +1635,62 @@ function FormularioCliente({ visivel, onFechar }: { visivel: boolean; onFechar: 
   const [nome, setNome] = useState("");
   const [doc, setDoc] = useState("");
   const [fone, setFone] = useState("");
+  const [vetorFacial, setVetorFacial] = useState<number[]>();
+  const [cameraFacialAberta, setCameraFacialAberta] = useState(false);
   const criar = useCriarCliente(() => {
-    setNome(""); setDoc(""); setFone(""); onFechar();
+    setNome(""); setDoc(""); setFone(""); setVetorFacial(undefined); onFechar();
   });
   return (
-    <Folha visivel={visivel} titulo="Novo cliente" onFechar={onFechar}>
-      <Campo rotulo="Nome" valor={nome} onChange={setNome} />
-      <Campo rotulo="CPF" valor={doc} onChange={setDoc} teclado="numeric" />
-      <Campo rotulo="Telefone" valor={fone} onChange={setFone} teclado="phone-pad" />
-      <Botao titulo="Cadastrar" largura="cheia" carregando={criar.isPending} onPress={() => criar.mutate({ nome, documento: doc, telefone: fone })} />
-    </Folha>
+    <>
+      <Folha visivel={visivel && !cameraFacialAberta} titulo="Novo cliente" onFechar={onFechar}>
+        <Campo rotulo="Nome" valor={nome} onChange={setNome} />
+        <Campo rotulo="CPF" valor={doc} onChange={setDoc} teclado="numeric" />
+        <Campo rotulo="Telefone" valor={fone} onChange={setFone} teclado="phone-pad" />
+        <Cartao destaque={Boolean(vetorFacial)}>
+          <View style={estilos.linhaEntre}>
+            <View style={{ flex: 1, gap: spacing.xs }}>
+              <Rotulo>Reconhecimento facial</Rotulo>
+              <Apoio>
+                {vetorFacial
+                  ? "Rosto capturado. A foto não será salva."
+                  : "Opcional. Cadastre o rosto para identificação rápida."}
+              </Apoio>
+            </View>
+            {vetorFacial ? <Icone nome="checkmark-circle" cor={colors.success} tamanho={28} /> : null}
+          </View>
+          <Botao
+            titulo={vetorFacial ? "Capturar novamente" : "Usar câmera"}
+            icone="camera-outline"
+            variante="secundario"
+            largura="cheia"
+            onPress={() => setCameraFacialAberta(true)}
+          />
+        </Cartao>
+        <Botao
+          titulo="Cadastrar"
+          largura="cheia"
+          carregando={criar.isPending}
+          onPress={() => criar.mutate({
+            nome,
+            documento: doc,
+            telefone: fone,
+            vetorFacial,
+            consentimentoFacial: Boolean(vetorFacial),
+          })}
+        />
+      </Folha>
+      <ReconhecimentoFacial
+        visivel={cameraFacialAberta}
+        modo="cadastro"
+        titulo="Cadastrar rosto"
+        onFechar={() => setCameraFacialAberta(false)}
+        onConcluir={(vetor) => {
+          setVetorFacial(vetor);
+          setCameraFacialAberta(false);
+          avisar.sucesso("Rosto capturado. Nenhuma foto foi salva.");
+        }}
+      />
+    </>
   );
 }
 
@@ -1629,6 +1731,8 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
   const [campanhaId, setCampanhaId] = useState("");
   const [valor, setValor] = useState<number | null>(null);
   const [scannerAberto, setScannerAberto] = useState(false);
+  const [cameraFacialAberta, setCameraFacialAberta] = useState(false);
+  const [clienteFacial, setClienteFacial] = useState<Cliente | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const clientes = useClientes({ busca: buscaCliente, tamanho: 12 });
   const campanhas = useCampanhas({ situacao: ["ATIVA"], tamanho: 50 });
@@ -1636,17 +1740,23 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
     setBuscaCliente("");
     setClienteId("");
     setCodigoCliente("");
+    setClienteFacial(null);
     setCampanhaId("");
     setValor(null);
     onFechar();
   });
   const opcoesClientes = useMemo(
-    () => (clientes.data?.content ?? []).map((item) => ({
+    () => [
+      ...(clienteFacial && !clientes.data?.content.some((item) => item.id === clienteFacial.id)
+        ? [clienteFacial]
+        : []),
+      ...(clientes.data?.content ?? []),
+    ].map((item) => ({
       valor: item.id,
       rotulo: item.nome,
       dica: `${documento(item.documento)} • ${item.codigoCartao}`,
     })),
-    [clientes.data],
+    [clientes.data, clienteFacial],
   );
   const opcoesCampanhas = useMemo(
     () => (campanhas.data?.content ?? []).map((item) => ({
@@ -1659,28 +1769,32 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
 
   return (
     <>
-      <Folha visivel={visivel && !scannerAberto} titulo="Registrar compra" onFechar={onFechar}>
+      <Folha visivel={visivel && !scannerAberto && !cameraFacialAberta} titulo="Registrar compra" onFechar={onFechar}>
       <View style={estilos.linhaEntre}>
         <View style={{ flex: 1 }}>
           <Rotulo>Cliente</Rotulo>
-          <Apoio>Leia o QR ou digite CPF, cartão, nome ou telefone.</Apoio>
+          <Apoio>Reconheça o rosto, leia o QR ou faça a busca manual.</Apoio>
         </View>
-        <Botao titulo="Ler QR" icone="qr-code-outline" variante="secundario" compacto onPress={async () => {
-          if (!permission?.granted) {
-            const resposta = await requestPermission();
-            if (!resposta.granted) {
-              avisar.erro("Permita o uso da câmera para ler o QR Code.");
-              return;
+        <View style={{ gap: spacing.xs }}>
+          <Botao titulo="Buscar rosto" icone="scan-outline" compacto onPress={() => setCameraFacialAberta(true)} />
+          <Botao titulo="Ler QR" icone="qr-code-outline" variante="secundario" compacto onPress={async () => {
+            if (!permission?.granted) {
+              const resposta = await requestPermission();
+              if (!resposta.granted) {
+                avisar.erro("Permita o uso da câmera para ler o QR Code.");
+                return;
+              }
             }
-          }
-          setScannerAberto(true);
-        }} />
+            setScannerAberto(true);
+          }} />
+        </View>
       </View>
       <Busca
         valor={buscaCliente}
         onChange={(texto) => {
           setBuscaCliente(texto);
           setCodigoCliente("");
+          setClienteFacial(null);
         }}
         placeholder="CPF, cartão, nome ou telefone"
       />
@@ -1729,8 +1843,30 @@ function FormularioCompraRapida({ visivel, onFechar }: { visivel: boolean; onFec
           setCodigoCliente(busca);
           setBuscaCliente(busca);
           setClienteId("");
+          setClienteFacial(null);
           setScannerAberto(false);
           avisar.informacao("QR lido. Confira o cliente encontrado.");
+        }}
+      />
+      <ReconhecimentoFacial
+        visivel={cameraFacialAberta}
+        modo="reconhecimento"
+        titulo="Buscar cliente pelo rosto"
+        onFechar={() => setCameraFacialAberta(false)}
+        onConcluir={async (vetor) => {
+          try {
+            const reconhecido = await servico.reconhecerClientePorRosto(vetor);
+            const ficha = await servico.obterFichaCliente(reconhecido.clienteId);
+            setClienteFacial(ficha.cliente);
+            setClienteId(ficha.cliente.id);
+            setCodigoCliente("");
+            setBuscaCliente("");
+            setCameraFacialAberta(false);
+            avisar.sucesso(`${ficha.cliente.nome} identificado pelo rosto.`);
+          } catch (erro) {
+            avisar.erro(mensagemDoErro(erro));
+            throw erro;
+          }
         }}
       />
     </>
@@ -2263,6 +2399,12 @@ function ConfiguracoesCard() {
       <Interruptor titulo="Avisar cliente" valor={valor.avisarCliente} onChange={(v) => setValor({ ...valor, avisarCliente: v })} />
       <Interruptor titulo="Bloquear próprio CPF" valor={valor.bloquearProprioCpf} onChange={(v) => setValor({ ...valor, bloquearProprioCpf: v })} />
       <Interruptor titulo="Bloquear duplicados" valor={valor.bloquearDuplicados} onChange={(v) => setValor({ ...valor, bloquearDuplicados: v })} />
+      <Interruptor
+        titulo="Exigir código depois do rosto"
+        descricao="Desative para o cliente abrir o cartão somente com reconhecimento facial."
+        valor={Boolean(valor.rostoExigeCodigo)}
+        onChange={(v) => setValor({ ...valor, rostoExigeCodigo: v })}
+      />
       <Botao titulo="Salvar" carregando={salvar.isPending} onPress={() => salvar.mutate(valor)} />
     </Cartao>
   );

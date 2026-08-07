@@ -14,7 +14,7 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Usamos a câmera para ler o QR Code do cliente no lançamento de compras."
+        "NSCameraUsageDescription": "Usamos a câmera para ler QR Codes e gerar o reconhecimento facial autorizado pelo cliente."
       }
     },
     "android": {
@@ -35,7 +35,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Usamos a câmera para ler o QR Code do cliente no lançamento de compras."
+          "cameraPermission": "Usamos a câmera para ler QR Codes e gerar o reconhecimento facial autorizado pelo cliente."
         }
       ]
     ]

@@ -344,6 +344,8 @@ export interface Configuracao {
   avisarCliente: boolean;
   bloquearProprioCpf: boolean;
   bloquearDuplicados: boolean;
+  /** Quando ativo, o rosto identifica e o código do telefone ainda autentica. */
+  rostoExigeCodigo: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

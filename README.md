@@ -19,6 +19,16 @@ npm run android
 No emulador Android, mantenha `EXPO_PUBLIC_API_URL=http://10.0.2.2:8080`.
 Em aparelho físico, troque pelo IP LAN da máquina que executa a API.
 
+## Reconhecimento facial
+
+O app usa a câmera nativa do Expo e executa TensorFlow.js/Human em um WebView
+local. Ele envia ao backend somente o descritor FaceRes compatível com o painel
+web; a foto capturada fica na memória durante a análise e não é armazenada.
+
+Em desenvolvimento, os modelos são carregados do CDN indicado em
+`EXPO_PUBLIC_HUMAN_BASE_URL`. Em produção, publique a mesma versão do pacote
+Human em infraestrutura própria e altere essa variável para a URL publicada.
+
 ## Verificações
 
 ```bash

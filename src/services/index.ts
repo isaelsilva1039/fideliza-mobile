@@ -214,6 +214,8 @@ export interface NovoCliente {
   documento: string;
   telefone: string;
   email?: string;
+  vetorFacial?: number[];
+  consentimentoFacial?: boolean;
 }
 
 export function criarCliente(entrada: NovoCliente): Promise<c.Cliente> {
@@ -229,6 +231,15 @@ export interface EdicaoCliente {
 
 export function editarCliente(id: string, entrada: EdicaoCliente): Promise<c.Cliente> {
   return api.patch<c.Cliente>(`/api/clientes/${id}`, entrada);
+}
+
+export function reconhecerClientePorRosto(
+  vetor: number[],
+): Promise<{ clienteId: string; similaridade: number }> {
+  return api.post<{ clienteId: string; similaridade: number }>(
+    "/api/clientes/reconhecer-rosto",
+    { vetor },
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -348,6 +359,14 @@ export function pedirCodigo(documento: string): Promise<c.PedidoDeCodigo> {
 
 export function consultarPortal(pedidoId: string, codigo: string): Promise<c.CartaoDoPortal> {
   return api.post<c.CartaoDoPortal>("/api/portal/consulta", { pedidoId, codigo });
+}
+
+export type ResultadoPortalFacial =
+  | { cartao: c.CartaoDoPortal; pedidoCodigo?: never }
+  | { cartao?: never; pedidoCodigo: c.PedidoDeCodigo };
+
+export function consultarPortalPorRosto(vetor: number[]): Promise<ResultadoPortalFacial> {
+  return api.post<ResultadoPortalFacial>("/api/portal/rosto", { vetor });
 }
 
 export function listarNotificacoesPortal(
