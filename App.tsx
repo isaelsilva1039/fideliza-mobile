@@ -1,6 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { StatusBar } from "expo-status-bar";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import QRCode from "react-native-qrcode-svg";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -13,7 +19,6 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -77,7 +82,8 @@ import {
 } from "./src/services/contrato";
 import { avisar, useAvisos } from "./src/stores/avisos";
 import { useSession } from "./src/stores/session";
-import { borderWidth, colors, fontSize, fontWeight, radius, spacing, theme, toneColors, type Tone } from "./src/theme";
+import { useTema } from "./src/stores/tema";
+import { folhaTematica, borderWidth, colors, fontSize, fontWeight, radius, spacing, theme, toneColors, type Tone } from "./src/theme";
 
 const LOGO = require("./assets/logo.png");
 
@@ -94,11 +100,40 @@ type FluxoPublico = "login" | "portal-documento" | "portal-codigo" | "portal-car
 type AbaAtual = NomeDeAba | "notificacoes";
 
 export default function App() {
+  const esquema = useTema((estado) => estado.esquema);
+  const carregado = useTema((estado) => estado.carregado);
+  const carregar = useTema((estado) => estado.carregar);
+
+  useEffect(() => {
+    void carregar();
+  }, [carregar]);
+
+  /*
+   * Nada desenhado antes de ler a preferência do disco. São milissegundos, e
+   * evitam o app abrir claro e piscar para escuro na cara de quem escolheu
+   * escuro.
+   */
+  if (!carregado) return null;
+
   return (
+    <SafeAreaProvider>
     <QueryClientProvider client={queryClient}>
-      <FidelizaApp />
+      {/*
+        Os ícones da barra de status invertem com o tema. Sem isto eles ficam
+        escuros sobre o fundo preto do tema escuro — some a hora, o sinal e a
+        bateria, e ninguém associa isso ao botão que acabou de tocar.
+      */}
+      <StatusBar style={esquema === "escuro" ? "light" : "dark"} />
+      {/*
+        `key` no esquema: trocar o tema remonta a árvore inteira. É o que faz as
+        folhas de estilo serem lidas de novo — elas são resolvidas no acesso, e
+        sem uma renderização nova ninguém as acessa. Remontar custa o estado de
+        tela, e trocar de tema é raro o bastante para isso não incomodar.
+      */}
+      <FidelizaApp key={esquema} />
       <Toasts />
     </QueryClientProvider>
+    </SafeAreaProvider>
   );
 }
 
@@ -678,6 +713,14 @@ function Shell({
   const [menuAberto, setMenuAberto] = useState(false);
   const [perfilAberto, setPerfilAberto] = useState(false);
   const [compraRapidaAberta, setCompraRapidaAberta] = useState(false);
+  /*
+   * O Expo 54 liga edge-to-edge no Android: o app desenha por baixo das barras
+   * do sistema. A `SafeAreaView` cuida do topo; a navbar e o botão flutuante são
+   * posicionados em `absolute` e ficariam atrás dos botões nativos do aparelho,
+   * então sobem pela altura que o próprio sistema informa. Fixar um número aqui
+   * erraria entre aparelho com gesto e aparelho com três botões.
+   */
+  const bordas = useSafeAreaInsets();
   const principais = abas.slice(0, 4);
   const resto = abas.slice(4);
   const abaNoResto = resto.some((item) => item.rota === aba);
@@ -689,6 +732,7 @@ function Shell({
           <LogoMarca />
           <Apoio numberOfLines={1} style={{ flex: 1 }}>{empresa}</Apoio>
         </View>
+        <BotaoTema />
         <SininhoNotificacoes quantidade={0} onPress={() => onAba("notificacoes")} />
         <BotaoIcone icone="person-circle-outline" rotulo="Abrir perfil" onPress={() => setPerfilAberto(true)} />
       </View>
@@ -699,10 +743,10 @@ function Shell({
         </View>
       </View>
       <View style={estilos.miolo}>{children}</View>
-      <Pressable accessibilityRole="button" accessibilityLabel="Registrar compra" style={estilos.fabCompra} onPress={() => setCompraRapidaAberta(true)}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Registrar compra" style={[estilos.fabCompra, { bottom: bordas.bottom + 92 }]} onPress={() => setCompraRapidaAberta(true)}>
         <Icone nome="cash-outline" tamanho={26} cor={colors.primaryForeground} />
       </Pressable>
-      <View style={estilos.navbar}>
+      <View style={[estilos.navbar, { bottom: bordas.bottom + spacing.md }]}>
         {principais.map((item) => (
           <ItemNavbar key={item.rota} titulo={item.titulo} icone={item.icone} ativo={aba === item.rota} onPress={() => onAba(item.rota)} />
         ))}
@@ -738,6 +782,25 @@ function Shell({
       </Folha>
       <FormularioCompraRapida visivel={compraRapidaAberta} onFechar={() => setCompraRapidaAberta(false)} />
     </SafeAreaView>
+  );
+}
+
+/**
+ * A chave de tema, no topo.
+ *
+ * Ao lado do sino, e não dentro do menu do perfil: é a única preferência visual
+ * do app, e enterrá-la a dois toques faria ninguém achar.
+ */
+function BotaoTema() {
+  const esquema = useTema((estado) => estado.esquema);
+  const alternar = useTema((estado) => estado.alternar);
+
+  return (
+    <BotaoIcone
+      icone={esquema === "escuro" ? "sunny-outline" : "moon-outline"}
+      rotulo="Alternar entre tema claro e escuro"
+      onPress={alternar}
+    />
   );
 }
 
@@ -2488,7 +2551,11 @@ function FormularioEmpresa({ visivel, onFechar }: { visivel: boolean; onFechar: 
     <Folha visivel={visivel} titulo="Nova empresa" onFechar={onFechar}>
       <Campo rotulo="Nome fantasia" valor={nomeFantasia} onChange={setNomeFantasia} />
       <Campo rotulo="Razão social" valor={razaoSocial} onChange={setRazaoSocial} />
-      <Campo rotulo="CNPJ" valor={doc} onChange={setDoc} teclado="numeric" />
+      {/*
+        CPF ou CNPJ: a barraca de açaí e o lava-jato costumam não ter inscrição
+        própria e são cadastrados no documento do dono.
+      */}
+      <Campo rotulo="CPF ou CNPJ" valor={doc} onChange={setDoc} teclado="numeric" placeholder="Somente números" />
       <Campo rotulo="Cidade" valor={cidade} onChange={setCidade} />
       <Campo rotulo="UF" valor={uf} onChange={setUf} maxLength={2} autoCapitalize="characters" />
       <Botao titulo="Cadastrar empresa" largura="cheia" carregando={criar.isPending} onPress={() => criar.mutate({ nomeFantasia, razaoSocial, documento: doc, cidade, uf })} />
@@ -2830,7 +2897,12 @@ function tomEntrega(situacao: Entrega["situacao"]): Tone {
   return "danger";
 }
 
-const estilos = StyleSheet.create({
+/*
+ * Folha por esquema, e não uma só criada na importação: `StyleSheet.create`
+ * congela as cores no instante em que roda, e no topo do módulo isso é uma vez
+ * só, com o tema que estava valendo. Ver `folhaTematica`.
+ */
+const estilos = folhaTematica(() => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.background,
@@ -3438,4 +3510,4 @@ const estilos = StyleSheet.create({
     borderWidth: borderWidth.hairline,
     padding: spacing.md,
   },
-});
+}));

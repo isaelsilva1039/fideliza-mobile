@@ -4,7 +4,7 @@ import { Modal, SafeAreaView, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { Apoio, Botao, Icone, Texto, Titulo } from "./ui";
-import { colors, radius, spacing } from "../theme";
+import { folhaTematica, colors, radius, spacing } from "../theme";
 
 type Estado = "carregando" | "pronto" | "analisando" | "erro";
 type MensagemWeb =
@@ -270,7 +270,12 @@ function htmlDoTensorFlow(baseUrl: string) {
 </script></body></html>`;
 }
 
-const estilos = StyleSheet.create({
+/*
+ * Folha por esquema, e não uma só criada na importação: `StyleSheet.create`
+ * congela as cores no instante em que roda, e no topo do módulo isso é uma vez
+ * só, com o tema que estava valendo. Ver `folhaTematica`.
+ */
+const estilos = folhaTematica(() => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   cabecalho: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md },
   camera: { flex: 1, marginHorizontal: spacing.md, borderRadius: radius.none, overflow: "hidden" },
@@ -279,4 +284,4 @@ const estilos = StyleSheet.create({
   semCamera: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md, padding: spacing.xl },
   rodape: { gap: spacing.sm, padding: spacing.md },
   motor: { position: "absolute", width: 8, height: 8, left: -20, bottom: -20, opacity: 0.01 },
-});
+}));

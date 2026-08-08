@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 
-import { colors, fontSize, fontWeight, radius, spacing, touchTarget } from "../../theme";
+import { folhaTematica, colors, fontSize, fontWeight, radius, spacing, touchTarget } from "../../theme";
 
 /**
  * O botão.
@@ -133,7 +133,12 @@ export function BotaoIcone({
   );
 }
 
-const estilos = StyleSheet.create({
+/*
+ * Folha por esquema, e não uma só criada na importação: `StyleSheet.create`
+ * congela as cores no instante em que roda, e no topo do módulo isso é uma vez
+ * só, com o tema que estava valendo. Ver `folhaTematica`.
+ */
+const estilos = folhaTematica(() => StyleSheet.create({
   base: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.lg,
@@ -159,4 +164,4 @@ const estilos = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-});
+}));

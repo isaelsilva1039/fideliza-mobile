@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Children, type ReactNode } from "react";
 import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 
-import { colors, fontSize, fontWeight, radius, spacing, toneColors, type Tone } from "../../theme";
+import { folhaTematica, colors, fontSize, fontWeight, radius, spacing, toneColors, type Tone } from "../../theme";
 import { iniciais as calcularIniciais } from "../../lib/format";
 
 /**
@@ -323,7 +323,12 @@ export function Icone({
   return <Ionicons name={nome} size={tamanho} color={cor} />;
 }
 
-const estilos = StyleSheet.create({
+/*
+ * Folha por esquema, e não uma só criada na importação: `StyleSheet.create`
+ * congela as cores no instante em que roda, e no topo do módulo isso é uma vez
+ * só, com o tema que estava valendo. Ver `folhaTematica`.
+ */
+const estilos = folhaTematica(() => StyleSheet.create({
   cartao: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -379,4 +384,4 @@ const estilos = StyleSheet.create({
   barraPreenchida: {
     height: "100%",
   },
-});
+}));

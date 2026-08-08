@@ -13,7 +13,7 @@ import {
 } from "react-native";
 
 import { centavosDeTexto, moedaSemSimbolo } from "../../lib/format";
-import { colors, fontSize, fontWeight, radius, spacing, touchTarget } from "../../theme";
+import { folhaTematica, colors, fontSize, fontWeight, radius, spacing, touchTarget } from "../../theme";
 import { Apoio, Rotulo } from "./base";
 
 /**
@@ -383,7 +383,12 @@ export function Busca({
   );
 }
 
-const estilos = StyleSheet.create({
+/*
+ * Folha por esquema, e não uma só criada na importação: `StyleSheet.create`
+ * congela as cores no instante em que roda, e no topo do módulo isso é uma vez
+ * só, com o tema que estava valendo. Ver `folhaTematica`.
+ */
+const estilos = folhaTematica(() => StyleSheet.create({
   entrada: {
     minHeight: touchTarget,
     backgroundColor: colors.surface,
@@ -451,4 +456,4 @@ const estilos = StyleSheet.create({
     fontSize: fontSize.md,
     padding: 0,
   },
-});
+}));
