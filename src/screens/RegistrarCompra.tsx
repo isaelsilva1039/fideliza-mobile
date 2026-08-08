@@ -410,7 +410,7 @@ function SeletorDeCampanha({
         </View>
         <Apoio>{ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Apoio>
         <Apoio numberOfLines={2}>{campanha.regraEmUmaFrase}</Apoio>
-        {campanha.premio?.estoqueBaixo ? <Selo tom="warning">Estoque baixo do prêmio</Selo> : null}
+        {campanha.premios[0]?.estoqueBaixo ? <Selo tom="warning">Estoque baixo do prêmio</Selo> : null}
       </View>
     </Pressable>
   );

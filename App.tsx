@@ -12,11 +12,14 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Easing,
   Modal,
   Platform,
+  useWindowDimensions,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -77,13 +80,14 @@ import {
   type Perfil,
   type SituacaoCampanha,
   type SituacaoCliente,
+  type Sorteio,
   type SituacaoEntrega,
   type TipoCampanha,
 } from "./src/services/contrato";
 import { avisar, useAvisos } from "./src/stores/avisos";
 import { useSession } from "./src/stores/session";
 import { useTema } from "./src/stores/tema";
-import { folhaTematica, borderWidth, colors, fontSize, fontWeight, radius, spacing, theme, toneColors, type Tone } from "./src/theme";
+import { folhaTematica, borderWidth, brand, colors, fontSize, fontWeight, radius, spacing, theme, toneColors, type Tone } from "./src/theme";
 
 const LOGO = require("./assets/logo.png");
 
@@ -233,6 +237,13 @@ function FidelizaApp() {
       {aba === "notificacoes" ? <Notificacoes /> : null}
     </Shell>
   );
+}
+
+/** Um prêmio mostra o nome; vários mostram a contagem, porque a lista não cabe. */
+function nomeDosPremios(campanha: Campanha): string {
+  if (campanha.premios.length === 0) return "Prêmio a definir";
+  if (campanha.premios.length === 1) return campanha.premios[0].nome;
+  return `${campanha.premios.length} prêmios`;
 }
 
 function abasDoPerfil(perfil: Perfil) {
@@ -946,7 +957,12 @@ function Campanhas({ perfil, podeGerenciar, podeSortear, onAbrirCampanha }: { pe
   const [formAberto, setFormAberto] = useState(false);
   const query = useCampanhas({ busca, situacao: situacoes, tamanho: 50 });
   const alterar = useAlterarSituacaoCampanha();
-  const sortear = useSortear((sorteio) => Alert.alert("Sorteio realizado", sorteio.ganhadores.map((g) => `${g.posicao}. ${g.nome}`).join("\n") || "Sem ganhadores."));
+  const sortear = useSortear((sorteio) =>
+    Alert.alert(
+      "Sorteio realizado",
+      sorteio.ganhadores.map((g) => `${g.posicao}. ${g.nome}`).join("\n") || "Sem ganhadores.",
+    ),
+  );
   const totalFiltros = (busca.trim() ? 1 : 0) + situacoes.length;
 
   return (
@@ -1024,7 +1040,7 @@ function CampanhaCard({
   const podeExecutarSorteio = usuarioPodeSortearCampanha(perfil, podeSortear, campanha);
 
   return (
-    <Pressable onPress={onAbrir} accessibilityRole="button" accessibilityLabel={`Abrir ${campanha.premio?.nome ?? campanha.nome}`}>
+    <Pressable onPress={onAbrir} accessibilityRole="button" accessibilityLabel={`Abrir ${campanha.premios[0]?.nome ?? campanha.nome}`}>
       <Cartao destaque={destaque} style={estilos.campanhaCard}>
         <View style={estilos.campanhaTopo}>
           <View style={estilos.campanhaIcone}>
@@ -1035,7 +1051,7 @@ function CampanhaCard({
               <Selo tom={tomCampanha(campanha.situacao)}>{ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}</Selo>
               <Selo tom="brand">{ROTULO_TIPO_CAMPANHA[campanha.tipo]}</Selo>
             </View>
-            <Titulo nivel={2} numberOfLines={2}>{campanha.premio?.nome ?? "Prêmio a definir"}</Titulo>
+            <Titulo nivel={2} numberOfLines={2}>{nomeDosPremios(campanha)}</Titulo>
             <Apoio numberOfLines={1}>{campanha.nome}</Apoio>
             <Apoio numberOfLines={2}>{campanha.regraEmUmaFrase}</Apoio>
             {limiteCupons ? (
@@ -1238,7 +1254,34 @@ function CampanhaDetalhe({
   const detalhe = useCampanha(id);
   const participantes = useParticipantes(id, { busca, quaseCompletando: quaseCompletando || undefined, tamanho: 80 });
   const alterar = useAlterarSituacaoCampanha();
-  const sortear = useSortear((sorteio) => Alert.alert("Sorteio realizado", sorteio.ganhadores.map((g) => `${g.posicao}. ${g.nome}`).join("\n") || "Sem ganhadores."));
+  const [sorteando, setSorteando] = useState(false);
+  const [resultado, setResultado] = useState<Sorteio | null>(null);
+
+  /*
+   * O resultado volta do servidor em milissegundos, e revelar nesse tempo
+   * transforma o momento mais importante da campanha num piscar de tela. A
+   * revelação espera o tempo do suspense — e, se o servidor demorar mais que
+   * isso, espera o servidor. Nunca revela antes de ter a resposta na mão.
+   */
+  const sortear = useSortear();
+
+  const realizarSorteio = () => {
+    setSorteando(true);
+    const comecou = Date.now();
+
+    sortear.mutate(id, {
+      onSuccess: (sorteio) => {
+        const restante = Math.max(0, DURACAO_DO_SUSPENSE - (Date.now() - comecou));
+        setTimeout(() => {
+          setSorteando(false);
+          setResultado(sorteio);
+        }, restante);
+      },
+      // Falha corta o suspense na hora: o erro já apareceu no aviso, e manter a
+      // roleta girando faria parecer que ainda há chance de dar certo.
+      onError: () => setSorteando(false),
+    });
+  };
 
   if (detalhe.isLoading) return <CarregandoBloco />;
   if (detalhe.isError || !detalhe.data) return <ErroBloco />;
@@ -1256,14 +1299,20 @@ function CampanhaDetalhe({
     .filter((situacao) => usuarioPodeAlterarCampanha(perfil, podeGerenciar, campanha, situacao));
   const podeExecutarSorteio = usuarioPodeSortearCampanha(perfil, podeSortear, campanha);
 
+  // O próximo da fila: a campanha é apurada um prêmio por vez, e é este que o
+  // botão sorteia.
+  const jaSorteados = new Set((detalhe.data.sorteios ?? []).map((item) => item.nomePremio));
+  const proximoPremio = campanha.premios.find((item) => !jaSorteados.has(item.nome));
+
   return (
+    <>
     <ScrollView contentContainerStyle={estilos.conteudoComNav}>
       <TopoDetalhe titulo={campanha.nome} subtitulo={campanha.descricao} onVoltar={onVoltar} />
       <View style={estilos.acoesLinha}>
         {transicoesPermitidas.map((situacao) => (
           <Botao key={situacao} titulo={rotuloAcaoCampanha(campanha, situacao)} variante={situacao === "ENCERRADA" ? "secundario" : "primario"} compacto carregando={alterar.isPending} onPress={() => confirmarAlteracaoCampanha(campanha, situacao, () => alterar.mutate({ id: campanha.id, situacao }))} />
         ))}
-        {podeExecutarSorteio ? <Botao titulo="Sortear agora" icone="sparkles-outline" compacto carregando={sortear.isPending} onPress={() => confirmarSorteioCampanha(campanha, () => sortear.mutate(campanha.id))} /> : null}
+        {podeExecutarSorteio ? <Botao titulo="Sortear agora" icone="sparkles-outline" compacto carregando={sorteando} onPress={() => confirmarSorteioCampanha(campanha, realizarSorteio)} /> : null}
       </View>
 
       <View style={estilos.linhaEntre}>
@@ -1302,19 +1351,28 @@ function CampanhaDetalhe({
         </Cartao>
       ) : null}
 
-      {detalhe.data.sorteio ? (
-        <Cartao destaque>
-          <Titulo nivel={3}>{detalhe.data.sorteio.ganhadores.length === 1 ? "Ganhador" : "Ganhadores"}</Titulo>
-          {detalhe.data.sorteio.ganhadores.map((ganhador) => (
+      {/*
+        Um cartão por apuração. O hash se repete entre elas de propósito: a urna
+        é a mesma do primeiro ao último prêmio, e o hash igual prova que ninguém
+        mexeu na lista de cupons entre uma apuração e outra.
+      */}
+      {(detalhe.data.sorteios ?? []).map((sorteio, indice) => (
+        <Cartao key={sorteio.id} destaque>
+          <Titulo nivel={3}>
+            {(detalhe.data.sorteios ?? []).length > 1
+              ? `Prêmio ${indice + 1}: ${sorteio.nomePremio}`
+              : sorteio.nomePremio}
+          </Titulo>
+          {sorteio.ganhadores.map((ganhador) => (
             <Pressable key={ganhador.clienteId} onPress={() => onAbrirCliente(ganhador.clienteId)} accessibilityRole="button" accessibilityLabel={`Abrir ${ganhador.nome}`}>
               <Linha rotulo={`${ganhador.posicao}. ${ganhador.nome}`}>
                 <Texto>{ganhador.numeroCupom}</Texto>
               </Linha>
             </Pressable>
           ))}
-          <Apoio>Sorteado em {dataHora(detalhe.data.sorteio.realizadoEm)} • hash {detalhe.data.sorteio.hashLista.slice(0, 12)}</Apoio>
+          <Apoio>Sorteado em {dataHora(sorteio.realizadoEm)} • hash {sorteio.hashLista.slice(0, 12)}</Apoio>
         </Cartao>
-      ) : null}
+      ))}
 
       <View style={estilos.gradeIndicadores}>
         <Indicador titulo="Clientes participando" valor={String(campanha.totalParticipantes)} icone="people-outline" />
@@ -1322,7 +1380,7 @@ function CampanhaDetalhe({
       </View>
       <View style={estilos.gradeIndicadores}>
         <Indicador titulo="Movimento" valor={moeda(campanha.valorMovimentado)} icone="wallet-outline" />
-        <Indicador titulo="Prêmio" valor={campanha.premio?.nome ?? "A definir"} icone="gift-outline" />
+        <Indicador titulo={campanha.premios.length > 1 ? "Prêmios" : "Prêmio"} valor={nomeDosPremios(campanha)} icone="gift-outline" />
       </View>
 
       <Secao titulo="Como funciona">
@@ -1330,14 +1388,24 @@ function CampanhaDetalhe({
           <Texto>{campanha.regraEmUmaFrase}</Texto>
           <Linha rotulo="Período">{`${data(campanha.iniciaEm)} a ${data(campanha.terminaEm)}`}</Linha>
           {campanha.sorteiaEm ? <Linha rotulo="Sorteio">{data(campanha.sorteiaEm)}</Linha> : null}
-          {campanha.premio ? (
-            <>
+          {campanha.premios.map((premio, indice) => (
+            <View key={premio.id}>
               <Divisor />
-              <Titulo nivel={3}>{campanha.premio.nome}</Titulo>
-              <Apoio>{campanha.premio.descricao}</Apoio>
-              <Linha rotulo="Disponíveis">{`${campanha.premio.quantidadeDisponivel} de ${campanha.premio.quantidadeTotal}`}</Linha>
-              {campanha.premio.instrucoesRetirada ? <Apoio>Retirada: {campanha.premio.instrucoesRetirada}</Apoio> : null}
-            </>
+              <Titulo nivel={3}>
+                {campanha.premios.length > 1 ? `${indice + 1}. ` : ""}
+                {premio.nome}
+              </Titulo>
+              <Apoio>{premio.descricao}</Apoio>
+              <Linha rotulo="Disponíveis">{`${premio.quantidadeDisponivel} de ${premio.quantidadeTotal}`}</Linha>
+              {premio.instrucoesRetirada ? <Apoio>Retirada: {premio.instrucoesRetirada}</Apoio> : null}
+            </View>
+          ))}
+          {campanha.premios.length > 1 ? (
+            <Apoio>
+              {campanha.ganhadorPodeRepetir
+                ? "O mesmo cliente pode ganhar mais de um prêmio."
+                : "Quem já ganhou sai da urna dos prêmios seguintes."}
+            </Apoio>
           ) : null}
         </Cartao>
       </Secao>
@@ -1349,6 +1417,14 @@ function CampanhaDetalhe({
         )) : <Vazio texto="Nenhum participante encontrado." />}
       </Secao>
     </ScrollView>
+    <FolhaDoSorteio
+      visivel={sorteando}
+      premio={proximoPremio?.nome ?? campanha.nome}
+      cupons={detalhe.data.totalBeneficios}
+      nomes={(participantes.data?.content ?? []).map((item) => item.nome)}
+    />
+    <FolhaDoResultado sorteio={resultado} onFechar={() => setResultado(null)} />
+    </>
   );
 }
 
@@ -2142,14 +2218,24 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
   const [sorteio, setSorteio] = useState(dataInput(93));
   const [selosNecessarios, setSelosNecessarios] = useState("10");
   const [valorPorCupom, setValorPorCupom] = useState<number | null>(2000);
-  const [quantidadeGanhadores, setQuantidadeGanhadores] = useState("1");
   const [limiteTotalCupons, setLimiteTotalCupons] = useState("");
   const [valorMinimoCompra, setValorMinimoCompra] = useState<number | null>(null);
   const [limiteDiarioCliente, setLimiteDiarioCliente] = useState("1");
-  const [premio, setPremio] = useState("");
-  const [descricaoPremio, setDescricaoPremio] = useState("");
-  const [quantidadePremio, setQuantidadePremio] = useState("1");
-  const [instrucoesRetirada, setInstrucoesRetirada] = useState("");
+  /*
+   * Uma lista, e não quatro campos soltos: sorteio pode ter vários prêmios,
+   * apurados um por um no dia. Cartão fidelidade usa só o primeiro — vários ali
+   * significariam o cliente escolher qual quer ao completar, que é outra
+   * mecânica, com outra tela.
+   */
+  const [premios, setPremios] = useState<PremioEmEdicao[]>([
+    { nome: "", descricao: "", quantidade: "1", instrucoesRetirada: "" },
+  ]);
+  const [ganhadorPodeRepetir, setGanhadorPodeRepetir] = useState(false);
+
+  const alterarPremio = (indice: number, campo: keyof PremioEmEdicao, valor: string) =>
+    setPremios((atual) =>
+      atual.map((premio, i) => (i === indice ? { ...premio, [campo]: valor } : premio)),
+    );
   const [funcionarioPodePublicar, setFuncionarioPodePublicar] = useState(false);
   const [funcionarioPodePausar, setFuncionarioPodePausar] = useState(false);
   const [funcionarioPodeEncerrar, setFuncionarioPodeEncerrar] = useState(false);
@@ -2169,14 +2255,11 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
     setSorteio(dataInput(93));
     setSelosNecessarios("10");
     setValorPorCupom(2000);
-    setQuantidadeGanhadores("1");
     setLimiteTotalCupons("");
     setValorMinimoCompra(null);
     setLimiteDiarioCliente("1");
-    setPremio("");
-    setDescricaoPremio("");
-    setQuantidadePremio("1");
-    setInstrucoesRetirada("");
+    setPremios([{ nome: "", descricao: "", quantidade: "1", instrucoesRetirada: "" }]);
+    setGanhadorPodeRepetir(false);
     setFuncionarioPodePublicar(false);
     setFuncionarioPodePausar(false);
     setFuncionarioPodeEncerrar(false);
@@ -2191,7 +2274,6 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
       return;
     }
     setValorPorCupom(2000);
-    setQuantidadeGanhadores("1");
     setLimiteTotalCupons("");
     setLimiteDiarioCliente("20");
     setSorteio(dataInput(93));
@@ -2200,8 +2282,14 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
   function salvar(publicar: boolean) {
     const nome = nomeEmpresa.trim();
     const textoDescricao = descricao.trim();
-    const nomePremio = premio.trim();
-    const qtdPremio = inteiroCampo(quantidadePremio);
+    // Cartão fidelidade leva só o primeiro; sorteio leva todos.
+    const premiosDaVez = isCartao ? premios.slice(0, 1) : premios;
+    const premiosParaEnviar = premiosDaVez.map((item) => ({
+      nome: item.nome.trim(),
+      descricao: item.descricao.trim() || undefined,
+      quantidade: inteiroCampo(item.quantidade) ?? 0,
+      instrucoesRetirada: item.instrucoesRetirada.trim() || undefined,
+    }));
     const limiteDia = inteiroCampo(limiteDiarioCliente);
     const limiteCupons = inteiroCampo(limiteTotalCupons);
     const dataInicio = dataFormulario(inicio, "inicio");
@@ -2214,8 +2302,12 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
     if (textoDescricao.length > 160) return avisar.erro("Use no máximo 160 caracteres na frase da campanha.");
     if (!dataInicio || !dataFim) return avisar.erro("Informe início e término no formato AAAA-MM-DD.");
     if (dataFim.getTime() < dataInicio.getTime()) return avisar.erro("O término não pode ser antes do início.");
-    if (!nomePremio) return avisar.erro("Diga o que o cliente ganha.");
-    if (!qtdPremio || qtdPremio < 1 || qtdPremio > 9999) return avisar.erro("Informe quantos prêmios existem.");
+    if (premiosParaEnviar.some((item) => !item.nome)) {
+      return avisar.erro("Todo prêmio precisa de um nome.");
+    }
+    if (premiosParaEnviar.some((item) => item.quantidade < 1 || item.quantidade > 9999)) {
+      return avisar.erro("Informe quantas unidades cada prêmio tem.");
+    }
     if (!limiteDia || limiteDia < 1 || limiteDia > 100) return avisar.erro("O limite diário deve ficar entre 1 e 100.");
 
     if (isCartao) {
@@ -2230,10 +2322,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
         valorMinimoCompra: valorMinimoCompra || undefined,
         selosNecessarios: selos,
         limiteDiarioCliente: limiteDia,
-        nomePremio,
-        descricaoPremio: descricaoPremio.trim() || undefined,
-        quantidadePremio: qtdPremio,
-        instrucoesRetirada: instrucoesRetirada.trim() || undefined,
+        premios: premiosParaEnviar,
         funcionarioPodePublicar,
         funcionarioPodePausar,
         funcionarioPodeEncerrar,
@@ -2243,9 +2332,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
       return;
     }
 
-    const ganhadores = inteiroCampo(quantidadeGanhadores);
     if (!valorPorCupom || valorPorCupom <= 0) return avisar.erro("Diga de quanto em quanto o cliente ganha um cupom.");
-    if (!ganhadores || ganhadores < 1 || ganhadores > 50) return avisar.erro("Informe quantos ganhadores o sorteio terá.");
     if (limiteTotalCupons.trim() && (!limiteCupons || limiteCupons < 1)) return avisar.erro("O limite total de cupons precisa ser maior que zero.");
     if (!dataSorteio) return avisar.erro("Informe a data do sorteio no formato AAAA-MM-DD.");
     if (dataSorteio.getTime() < dataFim.getTime()) return avisar.erro("O sorteio precisa ser depois do término da campanha.");
@@ -2259,13 +2346,10 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
       sorteiaEm: isoDaData(dataSorteio, "sorteio"),
       valorMinimoCompra: valorMinimoCompra || undefined,
       valorPorCupom,
-      quantidadeGanhadores: ganhadores,
       limiteTotalCupons: limiteCupons ?? undefined,
       limiteDiarioCliente: limiteDia,
-      nomePremio,
-      descricaoPremio: descricaoPremio.trim() || undefined,
-      quantidadePremio: qtdPremio,
-      instrucoesRetirada: instrucoesRetirada.trim() || undefined,
+      premios: premiosParaEnviar,
+      ganhadorPodeRepetir: premios.length > 1 && ganhadorPodeRepetir,
       funcionarioPodePublicar,
       funcionarioPodePausar,
       funcionarioPodeEncerrar,
@@ -2306,10 +2390,83 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
           </Secao>
 
           <Secao titulo="O que o cliente ganha">
-            <Campo rotulo="Prêmio" valor={premio} onChange={setPremio} placeholder={isCartao ? "Açaí de 500 ml grátis" : "Honda Pop 110i 0 km"} maxLength={80} />
-            <Campo rotulo="Descrição do prêmio" valor={descricaoPremio} onChange={setDescricaoPremio} multilinha maxLength={300} placeholder="Detalhes do prêmio, quando precisar." />
-            <Campo rotulo="Quantos você tem?" valor={quantidadePremio} onChange={setQuantidadePremio} teclado="number-pad" placeholder="1" />
-            <Campo rotulo="Como o cliente retira" valor={instrucoesRetirada} onChange={setInstrucoesRetirada} multilinha maxLength={300} placeholder="Apresente o código no caixa. Válido para consumo no local." />
+            {(isCartao ? premios.slice(0, 1) : premios).map((item, indice) => (
+              <View key={indice} style={{ gap: spacing.md }}>
+                {/*
+                  O número do prêmio é o que o dono anuncia no dia — "prêmio 1,
+                  prêmio 2" — e é a ordem em que serão apurados. Por isso aparece
+                  na tela, e não só na ordem invisível da lista.
+                */}
+                {!isCartao && premios.length > 1 ? (
+                  <View style={estilos.linhaEntre}>
+                    <Rotulo>Prêmio {indice + 1}</Rotulo>
+                    <Botao
+                      titulo="Remover"
+                      variante="secundario"
+                      compacto
+                      onPress={() => setPremios((atual) => atual.filter((_, i) => i !== indice))}
+                    />
+                  </View>
+                ) : null}
+                <Campo
+                  rotulo="Prêmio"
+                  valor={item.nome}
+                  onChange={(v) => alterarPremio(indice, "nome", v)}
+                  placeholder={isCartao ? "Açaí de 500 ml grátis" : "Honda Pop 110i 0 km"}
+                  maxLength={80}
+                />
+                <Campo
+                  rotulo="Descrição do prêmio"
+                  valor={item.descricao}
+                  onChange={(v) => alterarPremio(indice, "descricao", v)}
+                  multilinha
+                  maxLength={300}
+                  placeholder="Detalhes do prêmio, quando precisar."
+                />
+                <Campo
+                  rotulo="Quantos você tem?"
+                  valor={item.quantidade}
+                  onChange={(v) => alterarPremio(indice, "quantidade", v.replace(/\D/g, ""))}
+                  teclado="number-pad"
+                  placeholder="1"
+                  dica={isCartao ? undefined : "É também quantos ganhadores este prêmio terá."}
+                />
+                <Campo
+                  rotulo="Como o cliente retira"
+                  valor={item.instrucoesRetirada}
+                  onChange={(v) => alterarPremio(indice, "instrucoesRetirada", v)}
+                  multilinha
+                  maxLength={300}
+                  placeholder="Apresente o código no caixa. Válido para consumo no local."
+                />
+                <Divisor />
+              </View>
+            ))}
+
+            {!isCartao ? (
+              <>
+                <Botao
+                  titulo="Adicionar prêmio"
+                  icone="add-outline"
+                  variante="secundario"
+                  largura="cheia"
+                  onPress={() =>
+                    setPremios((atual) => [
+                      ...atual,
+                      { nome: "", descricao: "", quantidade: "1", instrucoesRetirada: "" },
+                    ])
+                  }
+                />
+                {premios.length > 1 ? (
+                  <Interruptor
+                    titulo="Mesmo cliente pode repetir"
+                    descricao="Desligado, quem já ganhou sai da urna dos prêmios seguintes."
+                    valor={ganhadorPodeRepetir}
+                    onChange={setGanhadorPodeRepetir}
+                  />
+                ) : null}
+              </>
+            ) : null}
           </Secao>
         </>
       ) : (
@@ -2320,7 +2477,6 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
             ) : (
               <>
                 <CampoMoeda rotulo="A cada quanto ganha 1 cupom?" centavos={valorPorCupom} onChange={setValorPorCupom} dica="Mesmo padrão da web: valor em reais convertido para centavos." />
-                <Campo rotulo="Quantos ganhadores?" valor={quantidadeGanhadores} onChange={setQuantidadeGanhadores} teclado="number-pad" placeholder="1" dica="Mínimo 1, máximo 50." />
                 <Campo rotulo="Limite total de cupons" valor={limiteTotalCupons} onChange={(v) => setLimiteTotalCupons(v.replace(/\D/g, ""))} teclado="number-pad" placeholder="Opcional" dica="Ao atingir esse total, a campanha para de aceitar novos cupons." />
               </>
             )}
@@ -2349,7 +2505,7 @@ function FormularioCampanha({ visivel, onFechar }: { visivel: boolean; onFechar:
       )}
 
       <Cartao destaque>
-        <Texto>{resumoNovaCampanha({ tipo, selosNecessarios, valorPorCupom, quantidadeGanhadores, limiteTotalCupons, valorMinimoCompra, premio })}</Texto>
+        <Texto>{resumoNovaCampanha({ tipo, selosNecessarios, valorPorCupom, quantidadePremio: premios.reduce((total, item) => total + (inteiroCampo(item.quantidade) ?? 0), 0) || 1, limiteTotalCupons, premio: premios[0]?.nome ?? "", valorMinimoCompra })}</Texto>
       </Cartao>
       <View style={estilos.acoesLinha}>
         <Botao titulo="Salvar rascunho" variante="secundario" carregando={criar.isPending} onPress={() => salvar(false)} />
@@ -2381,11 +2537,19 @@ function inteiroCampo(valor: string) {
   return Number.isFinite(numero) ? numero : null;
 }
 
+/** Um prêmio enquanto está sendo digitado: tudo texto, como o campo entrega. */
+interface PremioEmEdicao {
+  nome: string;
+  descricao: string;
+  quantidade: string;
+  instrucoesRetirada: string;
+}
+
 function resumoNovaCampanha({
   tipo,
   selosNecessarios,
   valorPorCupom,
-  quantidadeGanhadores,
+  quantidadePremio,
   limiteTotalCupons,
   valorMinimoCompra,
   premio,
@@ -2393,7 +2557,8 @@ function resumoNovaCampanha({
   tipo: TipoCampanha;
   selosNecessarios: string;
   valorPorCupom: number | null;
-  quantidadeGanhadores: string;
+  /** Quantos ganhadores: é o estoque do prêmio, e não um campo próprio. */
+  quantidadePremio: number;
   limiteTotalCupons: string;
   valorMinimoCompra: number | null;
   premio: string;
@@ -2402,9 +2567,219 @@ function resumoNovaCampanha({
     const minimo = valorMinimoCompra ? ` de ${moeda(valorMinimoCompra)} ou mais` : "";
     return `Cada compra${minimo} dá 1 selo. Com ${inteiroCampo(selosNecessarios) ?? 10} selos, o cliente ganha ${premio.trim() || "o prêmio"}.`;
   }
-  const ganhadores = inteiroCampo(quantidadeGanhadores) ?? 1;
+  const ganhadores = Math.max(1, quantidadePremio);
   const limite = inteiroCampo(limiteTotalCupons);
   return `A cada ${moeda(valorPorCupom ?? 0)}, 1 cupom. No fim, ${plural(ganhadores, "ganhador leva", "ganhadores levam")} ${premio.trim() || "o prêmio"}.${limite ? ` Limite de ${limite} cupons.` : ""}`;
+}
+
+/** Quanto tempo a roleta gira antes de revelar. */
+const DURACAO_DO_SUSPENSE = 3200;
+
+/**
+ * A roleta de nomes durante a apuração.
+ *
+ * <p>Os nomes são dos participantes de verdade — inventados aqui seriam um
+ * teatro que a primeira pessoa a reconhecer a lista desmascara, e no meio de um
+ * sorteio ao vivo isso é grave.
+ *
+ * <p>O intervalo vive neste componente, que só existe enquanto a folha está
+ * aberta: parar o giro é desmontar, e não sobra timer para alguém esquecer de
+ * limpar.
+ */
+function FolhaDoSorteio({
+  visivel,
+  premio,
+  cupons,
+  nomes,
+}: {
+  visivel: boolean;
+  premio: string;
+  cupons: number;
+  nomes: string[];
+}) {
+  const [indice, setIndice] = useState(0);
+  const [passo, setPasso] = useState(70);
+
+  useEffect(() => {
+    if (!visivel || nomes.length === 0) return;
+    const id = setInterval(() => setIndice((atual) => (atual + 1) % nomes.length), passo);
+    return () => clearInterval(id);
+  }, [visivel, nomes.length, passo]);
+
+  useEffect(() => {
+    if (!visivel) {
+      setPasso(70);
+      return;
+    }
+    // Desacelera no fim: roleta que para de repente parece travamento; a que
+    // desacelera parece sorteio, que é o que está acontecendo.
+    const marcas = [
+      setTimeout(() => setPasso(130), DURACAO_DO_SUSPENSE * 0.55),
+      setTimeout(() => setPasso(240), DURACAO_DO_SUSPENSE * 0.75),
+      setTimeout(() => setPasso(420), DURACAO_DO_SUSPENSE * 0.9),
+    ];
+    return () => marcas.forEach(clearTimeout);
+  }, [visivel]);
+
+  return (
+    <Modal visible={visivel} transparent animationType="fade" statusBarTranslucent>
+      <View style={estilos.fundoFolha}>
+        <View style={[estilos.folha, { paddingBottom: spacing.xl, gap: spacing.lg }]}>
+          <View style={{ alignItems: "center", gap: spacing.sm }}>
+            <Icone nome="sparkles-outline" tamanho={40} cor={colors.heading} />
+            <Titulo nivel={2}>Sorteando…</Titulo>
+            <Apoio style={{ textAlign: "center" }}>{premio}</Apoio>
+          </View>
+
+          <Cartao destaque>
+            <Titulo nivel={2} style={{ textAlign: "center" }}>
+              {nomes[indice] ?? "Embaralhando os cupons…"}
+            </Titulo>
+          </Cartao>
+
+          <Apoio style={{ textAlign: "center" }}>
+            {cupons} cupons na urna • quem juntou mais cupons tem mais chance
+          </Apoio>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Cores da marca mais dois contrastes, para o confete não virar um borrão verde. */
+const CORES_DO_CONFETE = [
+  brand[300],
+  brand[500],
+  brand[100],
+  colors.warning,
+  colors.info,
+];
+
+const PECAS_DE_CONFETE = 36;
+
+/**
+ * O confete da comemoração.
+ *
+ * <p>Sem biblioteca: confete é um punhado de retângulos caindo com rotação, e um
+ * pacote nativo a mais para isso custa build e tamanho de app.
+ *
+ * <p><b>Tudo em `useNativeDriver`.</b> Só `transform` e `opacity` são animados,
+ * que são as duas coisas que a ponte consegue entregar à thread de UI: a queda
+ * roda no lado nativo e não engasga quando o JavaScript está ocupado montando a
+ * lista de ganhadores.
+ *
+ * <p>As posições são sorteadas uma vez, num `useRef`. Sorteá-las na renderização
+ * faria cada re-render embaralhar o confete no ar.
+ */
+function Confete({ visivel }: { visivel: boolean }) {
+  const { width, height } = useWindowDimensions();
+
+  const pecas = useRef(
+    Array.from({ length: PECAS_DE_CONFETE }, () => ({
+      progresso: new Animated.Value(0),
+      esquerda: Math.random(),
+      atraso: Math.random() * 900,
+      duracao: 2200 + Math.random() * 1600,
+      cor: CORES_DO_CONFETE[Math.floor(Math.random() * CORES_DO_CONFETE.length)],
+      largura: 6 + Math.random() * 6,
+      altura: 9 + Math.random() * 8,
+      giros: 1 + Math.random() * 2,
+      // Deriva lateral: queda em linha reta parece chuva, não festa.
+      deriva: -60 + Math.random() * 120,
+    })),
+  ).current;
+
+  useEffect(() => {
+    if (!visivel) return;
+
+    const animacoes = pecas.map((peca) =>
+      Animated.timing(peca.progresso, {
+        toValue: 1,
+        duration: peca.duracao,
+        delay: peca.atraso,
+        easing: Easing.bezier(0.25, 0.6, 0.5, 1),
+        useNativeDriver: true,
+      }),
+    );
+
+    animacoes.forEach((animacao) => animacao.start());
+    return () => {
+      animacoes.forEach((animacao) => animacao.stop());
+      pecas.forEach((peca) => peca.progresso.setValue(0));
+    };
+  }, [visivel, pecas]);
+
+  if (!visivel) return null;
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+      {pecas.map((peca, indice) => (
+        <Animated.View
+          key={indice}
+          style={{
+            position: "absolute",
+            top: -20,
+            left: peca.esquerda * width,
+            width: peca.largura,
+            height: peca.altura,
+            backgroundColor: peca.cor,
+            opacity: peca.progresso.interpolate({
+              inputRange: [0, 0.1, 0.85, 1],
+              outputRange: [0, 1, 1, 0],
+            }),
+            transform: [
+              {
+                translateY: peca.progresso.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, height + 40],
+                }),
+              },
+              {
+                translateX: peca.progresso.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, peca.deriva],
+                }),
+              },
+              {
+                rotate: peca.progresso.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ["0deg", `${peca.giros * 360}deg`],
+                }),
+              },
+            ],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+/** O resultado, depois do suspense. */
+function FolhaDoResultado({ sorteio, onFechar }: { sorteio: Sorteio | null; onFechar: () => void }) {
+  return (
+    <Folha
+      visivel={Boolean(sorteio)}
+      titulo={sorteio && sorteio.ganhadores.length === 1 ? "Temos um ganhador!" : "Temos os ganhadores!"}
+      onFechar={onFechar}
+    >
+      <Confete visivel={Boolean(sorteio)} />
+      <Apoio>{sorteio?.nomePremio}</Apoio>
+      {sorteio?.ganhadores.map((ganhador) => (
+        <Cartao key={ganhador.clienteId} destaque>
+          <Titulo nivel={3}>{ganhador.posicao}º {ganhador.nome}</Titulo>
+          <Apoio>{documento(ganhador.documento)} • {telefone(ganhador.telefone)}</Apoio>
+          <Linha rotulo="Cupom">{ganhador.numeroCupom}</Linha>
+        </Cartao>
+      ))}
+      {sorteio ? (
+        <Apoio>
+          {dataHora(sorteio.realizadoEm)} • código de conferência {sorteio.hashLista.slice(0, 12)}
+        </Apoio>
+      ) : null}
+      <Apoio>O ganhador já foi avisado por WhatsApp com o código de retirada.</Apoio>
+      <Botao titulo="Concluir" largura="cheia" onPress={onFechar} />
+    </Folha>
+  );
 }
 
 function FormularioEntrega({ entrega, onFechar }: { entrega: Entrega | null; onFechar: () => void }) {

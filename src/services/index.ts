@@ -159,13 +159,17 @@ export interface NovaCampanha {
   valorMinimoCompra?: number;
   selosNecessarios?: number;
   valorPorCupom?: number;
-  quantidadeGanhadores?: number;
   limiteTotalCupons?: number;
   limiteDiarioCliente?: number;
-  nomePremio: string;
-  descricaoPremio?: string;
-  quantidadePremio?: number;
-  instrucoesRetirada?: string;
+  /** Em ordem de apuração. Sorteio pode ter vários; cartão fidelidade, um. */
+  premios: Array<{
+    id?: string;
+    nome: string;
+    descricao?: string;
+    quantidade?: number;
+    instrucoesRetirada?: string;
+  }>;
+  ganhadorPodeRepetir?: boolean;
   funcionarioPodePublicar?: boolean;
   funcionarioPodePausar?: boolean;
   funcionarioPodeEncerrar?: boolean;

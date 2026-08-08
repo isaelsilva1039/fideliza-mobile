@@ -180,11 +180,11 @@ export function ItemDeCampanha({
   const limiteAtingido = Boolean(limiteCupons && cuponsEmitidos >= limiteCupons);
 
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={campanha.premio?.nome ?? campanha.nome}>
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={campanha.premios[0]?.nome ?? campanha.nome}>
       <Cartao destaque={campanha.podeSortear}>
         <View style={estilos.topo}>
           <Titulo nivel={3} style={{ flex: 1 }} numberOfLines={2}>
-            {campanha.premio?.nome ?? "Prêmio a definir"}
+            {campanha.premios[0]?.nome ?? "Prêmio a definir"}
           </Titulo>
           <Selo tom={TOM_DA_SITUACAO[campanha.situacao]}>
             {ROTULO_SITUACAO_CAMPANHA[campanha.situacao]}

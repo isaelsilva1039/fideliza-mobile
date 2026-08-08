@@ -142,13 +142,14 @@ export interface Regra {
   selosNecessarios?: number;
   /** Centavos gastos por cupom. */
   valorPorCupom?: number;
-  quantidadeGanhadores?: number;
   limiteTotalCupons?: number;
   limiteDiarioCliente?: number;
 }
 
 export interface Premio {
   id: string;
+  /** 1, 2, 3… A ordem da apuração, e o número que o dono anuncia no dia. */
+  ordem: number;
   nome: string;
   descricao: string;
   quantidadeTotal: number;
@@ -169,7 +170,16 @@ export interface Campanha {
   terminaEm: string;
   sorteiaEm?: string;
   regra: Regra;
-  premio?: Premio;
+  /**
+   * O que o cliente ganha, em ordem de apuração.
+   *
+   * Sorteio pode ter vários — o atacadão que roda a campanha o ano inteiro e no
+   * dia sorteia a TV, depois a moto, tudo da mesma urna de cupons. Cartão
+   * fidelidade tem um só.
+   */
+  premios: Premio[];
+  /** Se quem já levou um prêmio concorre aos seguintes. */
+  ganhadorPodeRepetir: boolean;
   totalParticipantes: number;
   totalLancamentos: number;
   totalBeneficios?: number;
@@ -197,6 +207,8 @@ export interface Ganhador {
 
 export interface Sorteio {
   id: string;
+  /** Qual prêmio esta apuração sorteou. */
+  premioId?: string;
   realizadoEm: string;
   /** Hash da lista de cupons — é o que torna o sorteio auditável. */
   hashLista: string;
@@ -209,7 +221,8 @@ export interface Sorteio {
 export interface DetalheCampanha {
   campanha: Campanha;
   totalBeneficios: number;
-  sorteio?: Sorteio;
+  /** Uma por prêmio já apurado, na ordem em que saíram. Vazia se nenhuma. */
+  sorteios: Sorteio[];
 }
 
 export interface Participante {

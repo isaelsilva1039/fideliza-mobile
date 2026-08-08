@@ -57,7 +57,6 @@ interface Formulario {
   selosNecessarios: string;
   valorPorCupom: number | null;
   valorMinimoCompra: number | null;
-  quantidadeGanhadores: string;
   limiteTotalCupons: string;
   limiteDiarioCliente: string;
   nomePremio: string;
@@ -76,7 +75,6 @@ const VAZIO: Formulario = {
   selosNecessarios: "10",
   valorPorCupom: 1000,
   valorMinimoCompra: null,
-  quantidadeGanhadores: "1",
   limiteTotalCupons: "",
   limiteDiarioCliente: "",
   nomePremio: "",
@@ -136,13 +134,12 @@ export function CampanhaForm({ id, aoVoltar }: { id?: string; aoVoltar: () => vo
       selosNecessarios: String(carregada.regra.selosNecessarios ?? 10),
       valorPorCupom: carregada.regra.valorPorCupom ?? 1000,
       valorMinimoCompra: carregada.regra.valorMinimoCompra ?? null,
-      quantidadeGanhadores: String(carregada.regra.quantidadeGanhadores ?? 1),
       limiteTotalCupons: carregada.regra.limiteTotalCupons?.toString() ?? "",
       limiteDiarioCliente: carregada.regra.limiteDiarioCliente?.toString() ?? "",
-      nomePremio: carregada.premio?.nome ?? "",
-      descricaoPremio: carregada.premio?.descricao ?? "",
-      quantidadePremio: String(carregada.premio?.quantidadeTotal ?? 1),
-      instrucoesRetirada: carregada.premio?.instrucoesRetirada ?? "",
+      nomePremio: carregada.premios[0]?.nome ?? "",
+      descricaoPremio: carregada.premios[0]?.descricao ?? "",
+      quantidadePremio: String(carregada.premios[0]?.quantidadeTotal ?? 1),
+      instrucoesRetirada: carregada.premios[0]?.instrucoesRetirada ?? "",
     });
   }, [carregada]);
 
@@ -229,13 +226,14 @@ export function CampanhaForm({ id, aoVoltar }: { id?: string; aoVoltar: () => vo
       valorMinimoCompra: form.valorMinimoCompra ?? undefined,
       selosNecessarios: ehSorteio ? undefined : Number(form.selosNecessarios),
       valorPorCupom: ehSorteio ? (form.valorPorCupom ?? undefined) : undefined,
-      quantidadeGanhadores: ehSorteio ? numeroOuUndefined(form.quantidadeGanhadores) : undefined,
       limiteTotalCupons: ehSorteio ? numeroOuUndefined(form.limiteTotalCupons) : undefined,
       limiteDiarioCliente: numeroOuUndefined(form.limiteDiarioCliente),
-      nomePremio: form.nomePremio.trim(),
-      descricaoPremio: form.descricaoPremio.trim() || undefined,
-      quantidadePremio: numeroOuUndefined(form.quantidadePremio) ?? 1,
-      instrucoesRetirada: form.instrucoesRetirada.trim() || undefined,
+      premios: [{
+        nome: form.nomePremio.trim(),
+        descricao: form.descricaoPremio.trim() || undefined,
+        quantidade: numeroOuUndefined(form.quantidadePremio) ?? 1,
+        instrucoesRetirada: form.instrucoesRetirada.trim() || undefined,
+      }],
       publicar,
     };
   };
@@ -318,13 +316,6 @@ export function CampanhaForm({ id, aoVoltar }: { id?: string; aoVoltar: () => vo
               onChange={(v) => atualizar("valorPorCupom", v)}
               dica="A cada esse valor gasto, o cliente ganha um cupom."
               erro={erros.valorPorCupom}
-            />
-            <Campo
-              rotulo="Quantos ganhadores"
-              valor={form.quantidadeGanhadores}
-              onChange={(v) => atualizar("quantidadeGanhadores", v.replace(/\D/g, ""))}
-              teclado="number-pad"
-              erro={erros.quantidadeGanhadores}
             />
             <Campo
               rotulo="Limite total de cupons (opcional)"

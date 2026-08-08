@@ -112,8 +112,10 @@ export function CampanhaDetalhe({ id, aoVoltar }: { id: string; aoVoltar: () => 
                   {campanha.regra.valorMinimoCompra !== undefined ? (
                     <Linha rotulo="Compra mínima">{moeda(campanha.regra.valorMinimoCompra)}</Linha>
                   ) : null}
-                  {campanha.regra.quantidadeGanhadores !== undefined ? (
-                    <Linha rotulo="Ganhadores">{campanha.regra.quantidadeGanhadores}</Linha>
+                  {campanha.premios.length > 0 ? (
+                    <Linha rotulo="Ganhadores">
+                      {campanha.premios.reduce((total, premio) => total + premio.quantidadeTotal, 0)}
+                    </Linha>
                   ) : null}
                   {campanha.regra.limiteTotalCupons !== undefined ? (
                     <Linha rotulo="Limite total de cupons">{campanha.regra.limiteTotalCupons}</Linha>
@@ -124,24 +126,24 @@ export function CampanhaDetalhe({ id, aoVoltar }: { id: string; aoVoltar: () => 
                 </Cartao>
               </Secao>
 
-              {campanha.premio ? (
+              {campanha.premios[0] ? (
                 <Secao titulo="Prêmio">
                   <Cartao>
-                    <Titulo nivel={3}>{campanha.premio.nome}</Titulo>
-                    {campanha.premio.descricao ? <Apoio>{campanha.premio.descricao}</Apoio> : null}
+                    <Titulo nivel={3}>{campanha.premios[0].nome}</Titulo>
+                    {campanha.premios[0].descricao ? <Apoio>{campanha.premios[0].descricao}</Apoio> : null}
                     <Divisor />
                     <Linha rotulo="Disponível">
-                      {campanha.premio.quantidadeDisponivel} de {campanha.premio.quantidadeTotal}
+                      {campanha.premios[0].quantidadeDisponivel} de {campanha.premios[0].quantidadeTotal}
                     </Linha>
-                    <Linha rotulo="Já entregue">{campanha.premio.quantidadeEntregue}</Linha>
-                    {campanha.premio.estoqueBaixo ? (
+                    <Linha rotulo="Já entregue">{campanha.premios[0].quantidadeEntregue}</Linha>
+                    {campanha.premios[0].estoqueBaixo ? (
                       <Selo tom="warning">Estoque baixo</Selo>
                     ) : null}
-                    {campanha.premio.instrucoesRetirada ? (
+                    {campanha.premios[0].instrucoesRetirada ? (
                       <>
                         <Divisor />
                         <Rotulo>Como retirar</Rotulo>
-                        <Texto>{campanha.premio.instrucoesRetirada}</Texto>
+                        <Texto>{campanha.premios[0].instrucoesRetirada}</Texto>
                       </>
                     ) : null}
                   </Cartao>
@@ -170,7 +172,7 @@ export function CampanhaDetalhe({ id, aoVoltar }: { id: string; aoVoltar: () => 
                 />
               </Secao>
 
-              {detalhe.sorteio ? <ResultadoDoSorteio sorteio={detalhe.sorteio} /> : null}
+              {detalhe.sorteios?.[0] ? <ResultadoDoSorteio sorteio={detalhe.sorteios?.[0]} /> : null}
 
               {podeGerenciar || podeSortearPermissao ? (
                 <Acoes
