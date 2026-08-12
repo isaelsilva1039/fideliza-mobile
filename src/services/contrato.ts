@@ -627,3 +627,98 @@ export interface CartaoDoPortal {
   notificacoes: NotificacaoDoCliente[];
   notificacoesNaoLidas: number;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Análises                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Um dia do movimento.
+ *
+ * Cliente novo e cliente que voltou vêm separados porque as duas coisas pedem
+ * decisões opostas: só novos significa que a campanha atrai mas não fideliza; só
+ * quem voltou, que ela segura quem já vinha mas não traz ninguém.
+ */
+export interface PontoDeMovimento {
+  /** `AAAA-MM-DD`. É dia, não instante: o eixo do gráfico é o dia. */
+  dia: string;
+  compras: number;
+  /** Centavos. */
+  valor: number;
+  clientesNovos: number;
+  clientesRecorrentes: number;
+}
+
+/** Uma faixa de tempo com a contagem de clientes que caem nela. */
+export interface FaixaDeClientes {
+  /** Pronto do servidor: "até 15 dias", "mais de 90 dias". */
+  rotulo: string;
+  /** Teto da faixa em dias. Nulo na última, que é aberta. */
+  ateDias: number | null;
+  clientes: number;
+}
+
+/** Um cliente entre os que mais compraram na janela. */
+export interface ClienteFrequente {
+  clienteId: string;
+  nome: string;
+  telefone: string;
+  compras: number;
+  /** Centavos, no período. */
+  totalGasto: number;
+  ultimaCompra: string;
+}
+
+/** Um cliente que comprava e parou. O telefone vem para a lista ser acionável. */
+export interface ClienteSumido {
+  clienteId: string;
+  nome: string;
+  telefone: string;
+  diasSemComprar: number;
+  ultimaCompra: string;
+  /** Centavos, histórico — dá o tamanho do que se está perdendo. */
+  totalGasto: number;
+}
+
+/**
+ * As análises do movimento, numa resposta só.
+ *
+ * Todos os recortes saem da mesma varredura de lançamentos no servidor. Pedi-los
+ * separado abriria a chance de dois gráficos da mesma tela caírem em janelas de
+ * tempo diferentes e mostrarem números que não fecham entre si.
+ */
+export interface Analise {
+  /** Janela em dias usada no cálculo. */
+  dias: number;
+  totalCompras: number;
+  /** Clientes que compraram no período — não o total cadastrado. */
+  clientesQueCompraram: number;
+  /** Centavos. */
+  ticketMedio: number;
+  comprasPorCliente: number;
+  porDia: PontoDeMovimento[];
+  /** 24 linhas sempre. A hora morta é informação, então vem com zero. */
+  porHora: Array<{ hora: number; compras: number }>;
+  /** Sete linhas sempre, de `MONDAY` a `SUNDAY`. */
+  porDiaDaSemana: Array<{ dia: string; compras: number }>;
+  maisFrequentes: ClienteFrequente[];
+  /** Distribuição de "há quanto tempo não compra", da base inteira. */
+  recencia: FaixaDeClientes[];
+  sumidos: ClienteSumido[];
+  /** De quanto em quanto tempo o cliente volta. */
+  intervalos: FaixaDeClientes[];
+  /** O funil do cartão: quantos cartões param em cada selo. */
+  progressoDosCartoes: Array<{ selos: number; necessarios: number; cartoes: number }>;
+  porCampanha: Array<{
+    campanhaId: string;
+    nome: string;
+    tipo: TipoCampanha;
+    situacao: SituacaoCampanha;
+    clientes: number;
+    compras: number;
+    /** Selos ou cupons emitidos no período. */
+    beneficios: number;
+    /** Centavos. */
+    valor: number;
+  }>;
+}

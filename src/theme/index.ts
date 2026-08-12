@@ -72,6 +72,22 @@ const claras = {
   success: "#1D7957",
   successForeground: "#FFFFFF",
   successSubtle: "#E8F8F0",
+
+  /* Gráficos --------------------------------------------------------------- */
+  /*
+   * Duas séries, não oito: passando de cinco tons, as cores adjacentes deixam
+   * de ser distinguíveis por quem tem daltonismo. Os mesmos hexadecimais do
+   * `--chart-*` do painel web, validados par a par contra a superfície do
+   * cartão (branca aqui, #141416 no escuro) — quem trocar um valor precisa
+   * validar de novo.
+   *
+   * `chartMuted` é onde as barras de contexto ficam quando uma delas é o
+   * assunto: ênfase é mais legível que colorir todas.
+   */
+  chart1: "#25976B",
+  chart2: "#2563EB",
+  chartGrid: "#EEF2F0",
+  chartMuted: "#C2CCC7",
 } as const;
 
 /**
@@ -129,6 +145,12 @@ const escuras: Paleta = {
   success: "#6AE899",
   successForeground: "#062015",
   successSubtle: "#14301F",
+
+  /* Os mesmos matizes, com degraus próprios para a superfície escura. */
+  chart1: "#2BA375",
+  chart2: "#3987E5",
+  chartGrid: "#22222A",
+  chartMuted: "#4A4A55",
 };
 
 export type Esquema = "claro" | "escuro";

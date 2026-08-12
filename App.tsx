@@ -31,6 +31,7 @@ import {
 import { Avatar, Apoio, Cartao, Divisor, Icone, Linha, Numero, Rotulo, Secao, Selo, Selos, Texto, Titulo } from "./src/components/ui/base";
 import { Botao, BotaoIcone } from "./src/components/ui/Botao";
 import { ReconhecimentoFacial } from "./src/components/ReconhecimentoFacial";
+import { Analises } from "./src/screens/Analises";
 import { Busca, Campo, CampoMoeda, Filtros, Interruptor, Seletor } from "./src/components/ui/formulario";
 import { pode, perfisAtribuiveis } from "./src/constants/permissoes";
 import {
@@ -231,6 +232,7 @@ function FidelizaApp() {
         )
       ) : null}
       {aba === "entregas" ? <Entregas /> : null}
+      {aba === "analises" ? <Analises /> : null}
       {aba === "lancamentos" ? <Lancamentos /> : null}
       {aba === "equipe" ? <Equipe perfil={session.usuario.perfil} /> : null}
       {aba === "empresas" ? <Empresas /> : null}

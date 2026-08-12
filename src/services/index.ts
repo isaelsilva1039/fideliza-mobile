@@ -105,6 +105,14 @@ export function obterInicio(dias: number): Promise<c.ResumoInicio> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Análises                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export function obterAnalises(dias: number): Promise<c.Analise> {
+  return api.get<c.Analise>(`/api/analises${montarQuery({ dias })}`);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Campanhas                                                                  */
 /* -------------------------------------------------------------------------- */
 

@@ -29,6 +29,8 @@ import { useEmpresaAtivaId, useSession } from "../stores/session";
 
 const chaves = {
   empresa: (empresaId: string) => [empresaId] as const,
+  analises: (empresaId: string, dias: number) =>
+    [empresaId, "analises", dias] as const,
   inicio: (empresaId: string, dias: number) => [empresaId, "inicio", dias] as const,
   campanhas: (empresaId: string, filtro: unknown) =>
     [empresaId, "campanhas", filtro] as const,
@@ -51,6 +53,24 @@ const chaves = {
 /* -------------------------------------------------------------------------- */
 /* Consultas                                                                  */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * As análises do movimento.
+ *
+ * `placeholderData` segura o desenho anterior enquanto a nova janela chega: sem
+ * ele, trocar de 30 para 90 dias apagaria todos os gráficos e devolveria o
+ * carregando, e a tela saltaria de altura no meio da leitura.
+ */
+export function useAnalises(dias: number) {
+  const empresaId = useEmpresaAtivaId();
+
+  return useQuery({
+    queryKey: chaves.analises(empresaId, dias),
+    queryFn: () => servico.obterAnalises(dias),
+    enabled: Boolean(empresaId),
+    placeholderData: (anterior) => anterior,
+  });
+}
 
 export function useInicio(dias: number) {
   const empresaId = useEmpresaAtivaId();
