@@ -188,6 +188,14 @@ export interface Campanha {
   /** Frase pronta do servidor: "1 selo a cada R$ 20,00". */
   regraEmUmaFrase: string;
   podeSortear: boolean;
+  /**
+   * Se a campanha ainda pode ser alterada.
+   *
+   * Falso a partir do primeiro lançamento: a regra já foi prometida no balcão e
+   * já tem selo ou cupom contado por ela. Vem do servidor, e não de uma conta
+   * feita aqui, para o app nunca oferecer um botão que a API vai recusar.
+   */
+  podeEditar: boolean;
   funcionarioPodePublicar: boolean;
   funcionarioPodePausar: boolean;
   funcionarioPodeEncerrar: boolean;

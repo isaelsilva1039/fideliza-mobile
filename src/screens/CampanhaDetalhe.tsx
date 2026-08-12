@@ -296,13 +296,28 @@ function Acoes({
           <Botao titulo="Realizar sorteio" icone="trophy-outline" largura="cheia" onPress={aoSortear} />
         ) : null}
 
-        {podeGerenciar ? (
+        {/*
+          Editar só antes do primeiro lançamento. Depois dele o cliente já ouviu
+          a regra no balcão e já tem selo ou cupom contado por ela; mudar o
+          número ali reescreveria a promessa por baixo de quem estava juntando.
+          Quem precisa mudar depois encerra esta e publica outra.
+        */}
+        {podeGerenciar && campanha.podeEditar ? (
           <Botao
             titulo="Editar campanha"
             variante="secundario"
             icone="create-outline"
             largura="cheia"
             onPress={aoEditar}
+          />
+        ) : null}
+
+        {podeGerenciar && !campanha.podeEditar ? (
+          <Alerta
+            tom="info"
+            icone="lock-closed-outline"
+            titulo="Esta campanha não pode mais ser editada"
+            descricao="Já há compra registrada nela, e os clientes estão juntando pela regra atual. Para mudar as regras, encerre esta campanha e publique outra."
           />
         ) : null}
 

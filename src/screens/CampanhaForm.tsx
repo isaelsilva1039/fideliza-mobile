@@ -162,6 +162,23 @@ export function CampanhaForm({ id, aoVoltar }: { id?: string; aoVoltar: () => vo
     );
   }
 
+  // A tela de detalhe já esconde o botão, mas a lista pode estar velha na mão de
+  // quem deixou o app aberto. Barrar aqui evita preencher o formulário inteiro
+  // para o servidor recusar no fim.
+  if (editando && carregada && !carregada.podeEditar) {
+    return (
+      <Tela titulo="Editar campanha" aoVoltar={aoVoltar}>
+        <Alerta
+          tom="info"
+          icone="lock-closed-outline"
+          titulo="Esta campanha não pode mais ser editada"
+          descricao="Já há compra registrada nela, e os clientes estão juntando pela regra atual. Para mudar as regras, encerre esta campanha e publique outra."
+        />
+        <Botao titulo="Voltar" variante="secundario" largura="cheia" onPress={aoVoltar} />
+      </Tela>
+    );
+  }
+
   const atualizar = <K extends keyof Formulario>(chave: K, valor: Formulario[K]) => {
     setForm((atual) => ({ ...atual, [chave]: valor }));
     setErros((atual) => {
