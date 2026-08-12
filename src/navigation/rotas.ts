@@ -19,6 +19,7 @@ export type Rota =
   | { nome: "campanhas" }
   | { nome: "clientes" }
   | { nome: "entregas" }
+  | { nome: "analises" }
   | { nome: "lancamentos" }
   | { nome: "equipe" }
   | { nome: "empresas" }
@@ -39,6 +40,7 @@ export const ABAS = [
   "campanhas",
   "clientes",
   "entregas",
+  "analises",
   "lancamentos",
   "equipe",
   "empresas",
@@ -101,6 +103,13 @@ export const MENU: readonly ItemDeMenu[] = [
     dica: "Prêmios esperando o cliente",
   },
   {
+    rota: "analises",
+    titulo: "Análises",
+    icone: "bar-chart-outline",
+    dica: "Quem volta, quem sumiu, quando enche",
+    permissao: "analises.ver",
+  },
+  {
     rota: "lancamentos",
     titulo: "Lançamentos",
     icone: "clipboard-outline",
@@ -129,6 +138,7 @@ export const TITULOS: Record<NomeDeRota, string> = {
   campanhas: "Campanhas",
   clientes: "Clientes",
   entregas: "Entregas",
+  analises: "Análises",
   lancamentos: "Lançamentos",
   equipe: "Equipe",
   empresas: "Empresas",

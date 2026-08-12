@@ -22,6 +22,14 @@ export type Permissao =
   | "clientes.gerenciar"
   | "equipe.gerenciar"
   | "auditoria.ver"
+  /**
+   * Ver as análises do movimento.
+   *
+   * Separada de `auditoria.ver` porque as duas respondem a perguntas diferentes:
+   * auditoria é sobre a equipe ("quem lançou isso?"), análise é sobre a clientela
+   * ("quem parou de vir?").
+   */
+  | "analises.ver"
   | "configuracoes.gerenciar"
   | "empresas.gerenciar";
 
@@ -32,6 +40,7 @@ const DA_EMPRESA: readonly Permissao[] = [
   "clientes.gerenciar",
   "equipe.gerenciar",
   "auditoria.ver",
+  "analises.ver",
   "configuracoes.gerenciar",
 ];
 
@@ -43,6 +52,7 @@ export const ROTULO_PERMISSAO: Record<Permissao, string> = {
   "clientes.gerenciar": "Editar cadastro de clientes",
   "equipe.gerenciar": "Cadastrar e desativar a equipe",
   "auditoria.ver": "Ver os lançamentos e os sinais de alerta",
+  "analises.ver": "Ver as análises do movimento",
   "configuracoes.gerenciar": "Alterar configurações",
   "empresas.gerenciar": "Criar e desativar empresas",
 };
